@@ -77,10 +77,26 @@ function makeShims(win) {
     JSON.stringify({ ambientMotion: false, showBoot: false });
 
   /* Answers plausibly per invocation: `where yt-dlp` gets a path, `-g` gets a
-     progressive stream URL, everything else gets a path. */
+     progressive stream URL, everything else gets a path. The strict H.264
+     preview selector is made to fail so every stream resolution exercises the
+     last-resort `-f b` fallback in YtDlp.streamUrl. */
   function fakeChild(args) {
     const h = {};
     const argv = args || [];
+    const fIdx = argv.indexOf('-f');
+    const sel = fIdx > -1 ? argv[fIdx + 1] : '';
+    const strictPrimary = sel.indexOf('vcodec^=avc1') > -1;
+    let out = '', err = '', code = 0;
+    if (argv.indexOf('-g') > -1) {
+      if (strictPrimary) {
+        code = 1;
+        err = 'ERROR: requested format not available\n';
+      } else {
+        out = 'https://rr4---sn-example.googlevideo.com/videoplayback?expire=1&itag=18\n';
+      }
+    } else {
+      out = 'C:\\tools\\yt-dlp.exe\n';
+    }
     const child = {
       pid: 1234,
       stdout: { setEncoding() {}, on(e, f) { h['out:' + e] = f; }, pipe() {} },
@@ -88,12 +104,10 @@ function makeShims(win) {
       on(e, f) { h[e] = f; },
       kill() {}
     };
-    const out = argv.indexOf('-g') > -1
-      ? 'https://rr4---sn-example.googlevideo.com/videoplayback?expire=1&itag=18\n'
-      : 'C:\\tools\\yt-dlp.exe\n';
     setTimeout(() => {
-      h['out:data'] && h['out:data'](out);
-      h.close && h.close(0);
+      if (out) h['out:data'] && h['out:data'](out);
+      if (err) h['err:data'] && h['err:data'](err);
+      h.close && h.close(code);
     }, 5);
     return child;
   }
@@ -166,6 +180,21 @@ const $ = (s) => win.document.querySelector(s);
 const $$ = (s) => Array.from(win.document.querySelectorAll(s));
 const text = (n) => (n ? n.textContent.trim() : null);
 const settle = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+
+/* Boot locates yt-dlp/ffmpeg asynchronously (a `where` spawn). A Queue.add that
+   runs before that finishes throws synchronously from YtDlp.requireReady — a
+   flake under slow CI. Wait until the tools are found before asserting. */
+const waitTools = (ms = 4000) => {
+  const t0 = Date.now();
+  return new Promise((r) => {
+    const poll = () => {
+      if (MR.YtDlp.ready() || Date.now() - t0 > ms) return r();
+      setTimeout(poll, 40);
+    };
+    poll();
+  });
+};
+await waitTools();
 
 /* ========================================================================== */
 
@@ -328,6 +357,9 @@ MR.Queue.jobs.slice().forEach((j) => MR.Queue.remove(j.id));
 
 section('preview stream (YouTube embeds are refused in CEP)');
 check('a stream resolver exists instead of an iframe', typeof Y.streamUrl, 'function');
+const fallbackUrl = await Y.streamUrl('abcdefghijk', 480);
+check('strict H.264 selector failing still resolves via the last-resort fallback',
+  /^https:\/\//.test(fallbackUrl) && fallbackUrl.includes('googlevideo.com'), true);
 
 section('uppbeat');
 const UB = MR.Uppbeat;
@@ -406,6 +438,18 @@ check('a copy-credit button sits next to Audio',
 check('a copy-credit button sits on the download panel',
   videoBtns.filter((b) => b && b.startsWith('Copy credit')).length, 2);
 check('attribution block is rendered', ($('.mr-attrib')?.textContent || '').includes('CC BY 3.0'), true);
+
+section('licence check states');
+/* A video that has never been checked must render immediately, say so honestly,
+   and offer a manual "Check licence" — not block the whole view on a fetch. */
+const freshId = 'zzzzzneverchecked';
+MR.Bus.patch({ view: 'video', videoId: freshId, autoPlay: false, videoNonce: Date.now() });
+await settle(250);
+check('unchecked video shows the not-checked-yet message',
+  ($('.mr-view[data-view="video"]')?.textContent || '').includes('has not been licence-checked yet'), true);
+check('a manual Check licence button is offered',
+  $$('.mr-view[data-view="video"] .ps2-btn').map(text).includes('Check licence'), true);
+check('no verdict is shown before checking', !!$('.mr-view[data-view="video"] .mr-verdict'), false);
 
 section('setup');
 MR.Bus.patch({ view: 'settings' });

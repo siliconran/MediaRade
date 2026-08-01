@@ -206,34 +206,49 @@ export const YtDlp = {
     // bv+ba pair would print two URLs that <video> cannot combine.
     // Exclude AV1 — browsers in CEP/CEF may not hardware-decode it, causing
     // stutter. H.264 progressive streams are universally playable.
-    const sel = 'b[ext=mp4][vcodec^=avc1][acodec!=none][height<=' + cap + ']' +
-                '/b[ext=mp4][vcodec!~="av01"][acodec!=none][height<=' + cap + ']' +
-                '/b[vcodec!~="av01"][acodec!=none][height<=' + cap + ']' +
-                '/b[ext=mp4][vcodec^=avc1][acodec!=none]' +
-                '/b[ext=mp4][vcodec!~="av01"][acodec!=none]' +
-                '/b[vcodec!~="av01"][acodec!=none]' +
-                '/b[ext=mp4][acodec!=none]' +
-                '/b[acodec!=none]';
+    const PRIMARY = 'b[ext=mp4][vcodec^=avc1][acodec!=none][height<=' + cap + ']' +
+                    '/b[ext=mp4][vcodec!~="av01"][acodec!=none][height<=' + cap + ']' +
+                    '/b[vcodec!~="av01"][acodec!=none][height<=' + cap + ']' +
+                    '/b[ext=mp4][vcodec^=avc1][acodec!=none]' +
+                    '/b[ext=mp4][vcodec!~="av01"][acodec!=none]' +
+                    '/b[vcodec!~="av01"][acodec!=none]' +
+                    '/b[ext=mp4][acodec!=none]' +
+                    '/b[acodec!=none]';
+    // Last resort: a video whose only "progressive" stream the strict chain
+    // rejects (e.g. AV1-only, or a codec CEF cannot decode) still deserves a
+    // preview attempt. Bare `b` can also hand back a video-only stream, which
+    // plays picture with no sound — better than nothing in the panel.
+    const FALLBACK = 'b[acodec!=none]/b';
 
-    const args = YtDlp.commonArgs().concat(['-g', '-f', sel, '--no-playlist', url]);
+    const selectors = [PRIMARY, FALLBACK];
+    let firstFail = null;
 
-    return Proc.run(YtDlp.ytdlp, args, { timeout: 30000 }).then(function (r) {
-      const urls = (r.stdout || '').split(/\r?\n/)
-        .map(function (s) { return s.trim(); })
-        .filter(function (s) { return s.indexOf('http') === 0; });
-      if (r.code !== 0 || !urls.length) {
-        throw new Error(YtDlp.explain(r.stderr) ||
-          'No progressive stream is available for this video, so it cannot be previewed in the panel.');
-      }
-      streamCache[key] = { url: urls[0], at: Date.now() };
-      const keys = Object.keys(streamCache);
-      if (keys.length > STREAM_MAX) {
-        keys.sort(function (a, b) { return streamCache[a].at - streamCache[b].at; })
-          .slice(0, keys.length - STREAM_MAX)
-          .forEach(function (k) { delete streamCache[k]; });
-      }
-      return urls[0];
-    });
+    const attempt = function (i) {
+      const args = YtDlp.commonArgs().concat(['-g', '-f', selectors[i], '--no-playlist', url]);
+      return Proc.run(YtDlp.ytdlp, args, { timeout: 30000 }).then(function (r) {
+        const urls = (r.stdout || '').split(/\r?\n/)
+          .map(function (s) { return s.trim(); })
+          .filter(function (s) { return s.indexOf('http') === 0; });
+        if (r.code !== 0 || !urls.length) {
+          if (!firstFail) {
+            firstFail = YtDlp.explain(r.stderr) ||
+              'No stream could be resolved for this video, so it cannot be previewed in the panel.';
+          }
+          if (i + 1 < selectors.length) return attempt(i + 1);
+          throw new Error(firstFail);
+        }
+        streamCache[key] = { url: urls[0], at: Date.now() };
+        const keys = Object.keys(streamCache);
+        if (keys.length > STREAM_MAX) {
+          keys.sort(function (a, b) { return streamCache[a].at - streamCache[b].at; })
+            .slice(0, keys.length - STREAM_MAX)
+            .forEach(function (k) { delete streamCache[k]; });
+        }
+        return urls[0];
+      });
+    };
+
+    return attempt(0);
   },
 
   /**

@@ -23,7 +23,7 @@ export function VideoView() {
   const [currentId, setCurrentId] = createSignal(null);
   const [info, setInfo] = createSignal(null);
   const [report, setReport] = createSignal(null);
-  const [loading, setLoading] = createSignal(false);
+  const [checking, setChecking] = createSignal(false);
   const [loadError, setLoadError] = createSignal(null);
   const [playing, setPlaying] = createSignal(false);
 
@@ -57,14 +57,13 @@ export function VideoView() {
     // this effect and immediately cancel the playback we just asked for.
     const auto = untrack(function () { return state.autoPlay; });
     if (auto) Bus.patch({ autoPlay: false });
-    load(id, false, auto);
+    load(id, auto);
   });
 
   const offVerified = Bus.on('verified', function (id) {
     if (id === currentId()) {
       setInfo(Search.info(id));
       setReport(Search.report(id));
-      setLoading(false);
     }
   });
 
@@ -72,10 +71,14 @@ export function VideoView() {
 
   /* --- load ---------------------------------------------------------------- */
 
-  function load(id, quiet, autoplay) {
+  /* Renders instantly from the in-memory/disk caches; the licence check is a
+     deliberate, visible action (the "Check licence" button below) rather than
+     something that blocks the whole view on a network round trip. */
+  function load(id, autoplay) {
     setCurrentId(id);
     setPlaying(!!autoplay);
     setLoadError(null);
+    setChecking(false);
     setInfo(Search.info(id));
     setReport(Search.report(id));
     setQuality(Config.get('videoQuality'));
@@ -83,23 +86,28 @@ export function VideoView() {
     setAudioFormat(Config.get('audioFormat'));
     setSectionStart(null);
     setSectionEnd(null);
+  }
 
-    if (report() && info()) return;
-
-    if (!quiet) setLoading(true);
+  /** Manual "Check licence": fetch full metadata and audit it. */
+  function checkLicence() {
+    const id = currentId();
+    if (!id || checking()) return;
+    setChecking(true);
     Search.verify(id).then(function () {
+      if (id !== currentId()) return;
       setInfo(Search.info(id));
       setReport(Search.report(id));
-      setLoading(false);
+      setChecking(false);
     }).catch(function (e) {
-      setLoading(false);
+      if (id !== currentId()) return;
+      setChecking(false);
       setLoadError(e.message);
     });
   }
 
   function recheck() {
     Toast.info('Re-checking…', 'Fetching fresh metadata.');
-    Search.revalidate(currentId()).then(function () { load(currentId(), true); });
+    Search.revalidate(currentId()).then(function () { load(currentId()); });
   }
 
   function retry() {
@@ -177,6 +185,16 @@ export function VideoView() {
 
   const gateNote = createMemo(function () {
     const r = report();
+    if (!r) {
+      return {
+        cls: 'mr-claimwarn', style: {
+          color: 'var(--ps2-warn)', background: 'rgba(255,178,61,0.07)',
+          borderColor: 'rgba(255,178,61,0.28)', borderLeftColor: 'var(--ps2-warn)'
+        }, icon: '⏳', html:
+          'No licence verdict yet. Run <b>Check licence</b> above — downloads are blocked until ' +
+          'the material has been audited.'
+      };
+    }
     const g = gate();
     if (g && g.blocked) {
       return {
@@ -214,22 +232,10 @@ export function VideoView() {
         }
       >
         <Show
-          when={!loading() && !loadError() && report()}
+          when={!loadError()}
           fallback={
-            <>
-              <Show when={loading() || (!report() && !loadError())}>
-                <div style={{ padding: '24px 0' }}>
-                  <Progress indeterminate />
-                  <div class="ps2-caption" style={{ marginTop: '10px', textAlign: 'center' }}>
-                    Fetching full metadata and checking the licence…
-                  </div>
-                </div>
-              </Show>
-              <Show when={loadError()}>
-                <Empty title="Could not load this video" hint={U.esc(loadError())}
-                  action={<Btn variant="primary" label="Retry" onClick={retry} />} />
-              </Show>
-            </>
+            <Empty title="Could not load this video" hint={U.esc(loadError())}
+              action={<Btn variant="primary" label="Retry" onClick={retry} />} />
           }
         >
           <Player id={currentId()} playing={playing} setPlaying={setPlaying} />
@@ -272,11 +278,45 @@ export function VideoView() {
             <div class="ps2-panel__header">
               <span class="ps2-panel__title">Licence report</span>
               <span class="ps2-panel__spacer" />
-              <Btn size="sm" label="Re-check"
-                title="Licences can change after upload — re-fetch from YouTube"
-                onClick={recheck} />
+              <Show when={report()}>
+                <Btn size="sm" label="Re-check"
+                  title="Licences can change after upload — re-fetch from YouTube"
+                  onClick={recheck} />
+              </Show>
             </div>
-            <LicenseReport report={report()} />
+            <Show when={!report() && !checking()}>
+              <div class="mr-claimwarn" style={{
+                color: 'var(--ps2-warn)', background: 'rgba(255,178,61,0.07)',
+                borderColor: 'rgba(255,178,61,0.28)', borderLeftColor: 'var(--ps2-warn)' }}>
+                <span>⏳</span>
+                <div class="ps2-grow">
+                  <div innerHTML={
+                    '<b>This video has not been licence-checked yet.</b> A verdict is impossible without ' +
+                    'full metadata, so nothing here can be trusted until you run the checker.'} />
+                  <div style={{ marginTop: '10px' }}>
+                    <Btn variant="primary" size="sm" label="Check licence"
+                      title="Fetch full metadata and audit the licence"
+                      onClick={checkLicence} />
+                  </div>
+                </div>
+              </div>
+            </Show>
+            <Show when={!report() && checking()}>
+              <div class="mr-claimwarn" style={{
+                color: 'var(--ps2-warn)', background: 'rgba(255,178,61,0.07)',
+                borderColor: 'rgba(255,178,61,0.28)', borderLeftColor: 'var(--ps2-warn)' }}>
+                <span>⏳</span>
+                <div class="ps2-grow">
+                  <div>Checking the licence…</div>
+                  <div style={{ marginTop: '10px' }}>
+                    <Progress indeterminate />
+                  </div>
+                </div>
+              </div>
+            </Show>
+            <Show when={report()}>
+              <LicenseReport report={report()} />
+            </Show>
           </div>
 
           {info() && info().description ? (
@@ -457,11 +497,13 @@ function Player(props) {
   const [mode, setMode] = createSignal('idle');  // idle | resolving | stream | err
   const [src, setSrc] = createSignal(null);
   const [err, setErr] = createSignal(null);
+  const [attempt, setAttempt] = createSignal(0);   // bump to re-resolve after a failure
 
-  /* A new video resets everything and kicks off the stream resolution in the
-     background, so pressing Play later needs no waiting. */
+  /* A new video — or a Retry — resets everything and kicks off the stream
+     resolution in the background, so pressing Play later needs no waiting. */
   createEffect(function () {
     const vid = id();
+    const n = attempt();
     if (!vid) return;
     setMode('idle');
     setSrc(null);
@@ -469,11 +511,11 @@ function Player(props) {
 
     const wanted = vid;
     YtDlp.streamUrl(wanted, 480).then(function (url) {
-      if (wanted !== id()) return;                  // user moved on
+      if (wanted !== id() || n !== attempt()) return; // user moved on / re-resolved
       setSrc(url);
-      if (mode() === 'resolving') setMode('stream'); // play was pressed meanwhile
+      if (mode() === 'resolving') setMode('stream');  // play was pressed meanwhile
     }).catch(function (e) {
-      if (wanted !== id()) return;
+      if (wanted !== id() || n !== attempt()) return;
       setErr(e.message);
       if (mode() === 'resolving') setMode('err');
     });
@@ -490,7 +532,8 @@ function Player(props) {
 
   function retry() {
     setErr(null);
-    props.setPlaying(true);   // re-enters the play effect: resolving -> stream
+    setAttempt(attempt() + 1); // re-run the resolution effect: fresh streamUrl call
+    props.setPlaying(true);
   }
 
   return (
@@ -509,7 +552,7 @@ function Player(props) {
       <Show when={mode() === 'idle' || mode() === 'resolving' || mode() === 'err'}>
         <div class="mr-player__cover"
           style={{ backgroundImage: 'url("' + U.thumb(id(), 'hqdefault') + '")' }}
-          onClick={() => { if (mode() !== 'resolving') { setErr(null); props.setPlaying(true); } }}>
+          onClick={() => { if (mode() === 'resolving') return; if (mode() === 'err') { retry(); return; } setErr(null); props.setPlaying(true); }}>
           <Show when={mode() === 'idle'}>
             <div class="mr-player__play" innerHTML={U.icon('play', 22)} />
           </Show>
