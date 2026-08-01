@@ -12,7 +12,7 @@
 
    Everything below is the second path.
    ========================================================================== */
-import { state } from '../core/bus.js';
+import Bus, { state } from '../core/bus.js';
 import Config from '../core/config.js';
 import Premiere from '../core/premiere.js';
 import Paths from '../core/paths.js';
@@ -35,11 +35,6 @@ export const Place = {
     }
     if (payload.file && !Paths.exists(payload.file)) {
       Toast.err('File is missing', 'The media file is no longer on disk: ' + payload.file);
-      return Promise.resolve(null);
-    }
-    if (!state.host.connected) {
-      Toast.err('Premiere is not responding',
-        'The panel has lost its link to Premiere. Reopen it from Window › Extensions › MediaRade.');
       return Promise.resolve(null);
     }
 

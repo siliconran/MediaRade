@@ -64,24 +64,28 @@ export const DnD = {
       const url = CEP.toFileUrl(path);
       const name = payload.title || path.split(/[\\/]/).pop();
 
-      try {
-        dt.effectAllowed = 'copy';
-        // Premiere accepts text/uri-list with a file:// URL.
-        dt.setData('text/uri-list', url + '\r\n');
-        dt.setData('text/plain', path);
-        dt.setData('text/html', '<a href="' + url + '">' + U.esc(name) + '</a>');
-        // DownloadURL is used by some hosts to recognise dropped media.
-        dt.setData('DownloadURL', 'application/octet-stream:' + encodeURIComponent(name) + ':' + url);
+      try { dt.effectAllowed = 'copy'; } catch (err) { /* some hosts refuse this */ }
 
-        const ghost = ghostFor(payload);
-        document.body.appendChild(ghost);
-        if (dt.setDragImage) { try { dt.setDragImage(ghost, 14, 14); } catch (err) { /* keep the default image */ } }
-        window.setTimeout(function () { if (ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 0);
-
-        document.body.classList.add('is-dragging-media');
-      } catch (err) {
-        e.preventDefault();
+      // Each format is set independently so one unsupported type can never
+      // abort the whole drag. Premiere's timeline accepts text/uri-list (a
+      // file:// URL); text/plain and Files cover other drop targets.
+      const formats = [
+        function () { dt.setData('text/uri-list', url + '\r\n'); },
+        function () { dt.setData('text/plain', path); },
+        function () { dt.setData('Files', path); },
+        function () { dt.setData('text/html', '<a href="' + url + '">' + U.esc(name) + '</a>'); },
+        function () { dt.setData('DownloadURL', 'application/octet-stream:' + encodeURIComponent(name) + ':' + url); }
+      ];
+      for (let i = 0; i < formats.length; i++) {
+        try { formats[i](); } catch (err) { /* ignore unsupported format */ }
       }
+
+      const ghost = ghostFor(payload);
+      document.body.appendChild(ghost);
+      if (dt.setDragImage) { try { dt.setDragImage(ghost, 14, 14); } catch (err) { /* keep the default image */ } }
+      window.setTimeout(function () { if (ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 0);
+
+      document.body.classList.add('is-dragging-media');
     });
 
     node.addEventListener('dragend', function () {

@@ -14,7 +14,7 @@ const DEFAULTS = {
   strictMode: true,           // block anything not machine-verified as CC BY
   licenseMode: 'cc',          // 'cc' | 'claim' | 'all' — ignored while strictMode is on
   autoVerify: true,           // pull full metadata for every search hit
-  verifyConcurrency: 3,
+  verifyConcurrency: 5,       // parallel licence checks per page (each = 1 yt-dlp spawn)
   writeSidecars: true,        // .license.json + attribution.txt next to media
   writeCredits: true,         // append to Compliance\CREDITS.md
   stampMarker: true,          // drop a timeline marker carrying attribution

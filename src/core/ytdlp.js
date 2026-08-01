@@ -11,6 +11,14 @@ import { CEP } from './cep.js';
 const P_TAG = '@@MRP@@';   // progress line marker
 const F_TAG = '@@MRF@@';   // final filepath marker
 
+/* Session-scoped cache of resolved preview streams, keyed "id|cap".
+   The Player resolves a stream the moment a video is selected, so Play is
+   instant; a fresh yt-dlp spawn (~seconds) would defeat that. YouTube's URLs
+   stay valid for hours, so an 8-minute refresh is comfortably safe. */
+const streamCache = {};
+const STREAM_TTL = 8 * 60 * 1000;
+const STREAM_MAX = 120;
+
 export const YtDlp = {
   ytdlp: null,
   ffmpeg: null,
@@ -189,6 +197,10 @@ export const YtDlp = {
     const id = U.videoId(idOrUrl);
     const url = id ? U.watchUrl(id) : idOrUrl;
     const cap = maxHeight || 720;
+    const key = (id || url) + '|' + cap;
+
+    const hit = streamCache[key];
+    if (hit && (Date.now() - hit.at) < STREAM_TTL) return Promise.resolve(hit.url);
 
     // Progressive only: one file carrying both picture and sound. A split
     // bv+ba pair would print two URLs that <video> cannot combine.
@@ -212,6 +224,13 @@ export const YtDlp = {
       if (r.code !== 0 || !urls.length) {
         throw new Error(YtDlp.explain(r.stderr) ||
           'No progressive stream is available for this video, so it cannot be previewed in the panel.');
+      }
+      streamCache[key] = { url: urls[0], at: Date.now() };
+      const keys = Object.keys(streamCache);
+      if (keys.length > STREAM_MAX) {
+        keys.sort(function (a, b) { return streamCache[a].at - streamCache[b].at; })
+          .slice(0, keys.length - STREAM_MAX)
+          .forEach(function (k) { delete streamCache[k]; });
       }
       return urls[0];
     });

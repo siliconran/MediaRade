@@ -14,9 +14,12 @@ trademarks of Sony Interactive Entertainment.
 - **Search YouTube** with real filters (sort, length, upload date, HD/4K/subs), encoded into
   YouTube's own `sp=` protobuf so the filtering happens server-side.
 - **Audit every result** against a four-level risk model before anything can be downloaded.
+  Verified verdicts are cached to `Cache\license-cache.json`, so re-opening a video or re-searching
+  the same results is instant — only new/expired videos hit the network.
 - **Download** through `yt-dlp` as **Video + audio** (one muxed file), **Video only** or
   **Audio only**, with quality/container/format control, clip ranges, subtitles and SponsorBlock.
-- **Preview in the panel** — a real stream, not a YouTube embed (see below).
+- **Preview in the panel** — a real stream, not a YouTube embed (see below). The stream is resolved
+  the moment a video is selected, so Play starts instantly; resolved URLs are cached for the session.
 - **Browse Uppbeat** and download pre-cleared library music, with the artist credit surfaced
   everywhere it matters.
 - **Drag straight onto Premiere's timeline**, or one-click insert at the playhead.
@@ -83,9 +86,11 @@ The panel does **not** embed the YouTube player. A CEP panel is served over `fil
 origin is `null` and YouTube rejects the embed with *"Error 153 — Video player configuration
 error"*. There is no header or parameter that fixes this.
 
-Instead, pressing play asks `yt-dlp` for a **progressive stream URL** (one file carrying both
-picture and sound) and hands it to a plain `<video>`. If a video has no progressive stream, the
-panel says so and offers to open it in your browser rather than showing a dead player.
+Instead, selecting a video asks `yt-dlp` for a **progressive stream URL** (one file carrying both
+picture and sound) in the background, so pressing play hands that URL straight to a plain `<video>`
+and starts instantly. Resolved URLs are cached for the session, so re-opening the same video costs
+nothing. If a video has no progressive stream, the panel says so and offers to open it in your
+browser rather than showing a dead player.
 
 ## Uppbeat
 

@@ -95,17 +95,40 @@ export const CEP = {
 
   /* --- misc ------------------------------------------------------------ */
   openInBrowser: function (url) {
-    if (raw && raw.invokeSync) {
-      try { raw.invokeSync('openURLInDefaultBrowser', url); return; } catch (e) { /* fall through */ }
-    }
-    // Fallback: cmd /c start opens the URL in the default browser.
-    // Using an array avoids shell-quoting issues with special characters in the URL.
+    url = String(url || '');
+    if (!url) return;
+    // 1) window.open — CEP hosts hand external http(s) popups to the OS
+    //    browser. Cheap and non-blocking; skipped when popups are blocked.
     try {
-      const child = CEP.cp.spawn('cmd', ['/c', 'start', '""', url], { windowsHide: true, detached: true });
-      child.unref();
-    } catch (e) {
-      // Last resort: explorer
-      try { CEP.cp.spawn('explorer.exe', [url], { detached: true }).unref(); } catch (e2) {}
+      const w = window.open(url, '_blank');
+      if (w && !w.closed) return;
+    } catch (e) {}
+    // 2) rundll32 url.dll,FileProtocolHandler — the classic, reliable way to
+    //    hand a URL to the default browser on Windows. Node is confirmed
+    //    present (downloads already spawn child processes).
+    try {
+      CEP.cp.spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], { windowsHide: true, detached: true }).unref();
+      return;
+    } catch (e) {}
+    // 3) cmd /c start (older PowerShell-less fallback).
+    try {
+      CEP.cp.spawn('cmd', ['/c', 'start', '""', url], { windowsHide: true, detached: true }).unref();
+      return;
+    } catch (e) {}
+    // 4) PowerShell Start-Process.
+    try {
+      CEP.cp.spawn('powershell.exe',
+        ['-NoProfile', '-Command', 'Start-Process', '"' + url.replace(/"/g, '""') + '"'],
+        { windowsHide: true, detached: true }).unref();
+      return;
+    } catch (e) {}
+    // 5) explorer — opens the URL in the default browser too.
+    try { CEP.cp.spawn('explorer.exe', [url], { detached: true }).unref(); } catch (e2) {}
+    // 6) CEP's documented host API, exactly as CSInterface.openURLInDefaultBrowser
+    //    uses it — note the interface is 'external', not the URL. Kept last
+    //    because invokeSync is synchronous and must never block the panel.
+    if (raw && raw.invokeSync) {
+      try { raw.invokeSync('external', 'openURLInDefaultBrowser', url); } catch (e) {}
     }
   },
 
