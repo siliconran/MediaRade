@@ -32,7 +32,7 @@ const DEFAULTS = {
   safeSearch: true,
 
   /* --- download --------------------------------------------------------- */
-  videoQuality: '1080',       // 'best' | '2160' | '1440' | '1080' | '720' | '480'
+  videoQuality: 'best',       // 'best' | '2160' | '1440' | '1080' | '720' | '480'
   videoContainer: 'mp4',      // mp4 | mkv | webm
   audioFormat: 'wav',         // wav | mp3 | m4a | flac | opus
   audioQuality: '0',          // yt-dlp -q scale, 0 = best

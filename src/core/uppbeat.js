@@ -182,8 +182,8 @@ function httpDownload(url, destPath, onProgress, depth) {
 
 function explainStatus(status, what) {
   if (status === 401 || status === 403) {
-    return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — sign in ' +
-           'at uppbeat.io in your browser, then hit "Import session" in Setup.';
+    return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — press ' +
+           '"Sign in" to re-open uppbeat.io in your browser and pick the session up again.';
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
   if (status === 404) return 'Uppbeat returned 404 for the ' + what + ' endpoint. Their API path has probably changed — update it in Setup › Uppbeat.';
