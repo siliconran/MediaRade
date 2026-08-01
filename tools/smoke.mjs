@@ -432,6 +432,8 @@ check('dragstart publishes the file as a file:// uri-list',
   fakeDT.getData('text/uri-list').indexOf('file:///C:/Users/dev/Documents/MediaRade/Downloads/Video/clip.mp4') > -1, true);
 check('dragstart also publishes the raw Windows path',
   fakeDT.getData('text/plain'), 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4');
+check('dragstart publishes the CEP file-drag property Premiere needs',
+  fakeDT.getData('com.adobe.cep.dnd.file.0'), 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4');
 check('a dragstart for a file no longer on disk publishes nothing', (() => {
   const gone = $$('.mr-lib-item').find((el) => (el.textContent || '').includes('Gone clip'));
   const d = { data: {}, types: [], setData(t, v) { this.data[t] = v; if (this.types.indexOf(t) < 0) this.types.push(t); }, getData(t) { return this.data[t] || ''; } };
