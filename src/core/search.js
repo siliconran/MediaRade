@@ -20,6 +20,16 @@ const infoCache = {};      // videoId -> full yt-dlp info dict
 const reportCache = {};    // videoId -> licence report
 let currentRun = 0;
 
+/* --- disk-backed verification cache ----------------------------------------
+   Full metadata fetches are the slow part of a licence check (a yt-dlp spawn +
+   a network round trip each). Verified verdicts and a slim slice of the info
+   dict are persisted to Cache\license-cache.json, so re-opening a video or
+   re-searching the same results is instant and only genuinely new/expired
+   videos hit the network. Only the most recently checked are kept.         */
+let licenseCachePath = null;
+const MAX_LICENSE_CACHE = 600;
+let persistTimer = null;
+
 /* --- disk-backed result cache (title + thumbnail) -------------------------
    Re-running a query renders the cached page instantly, then refreshes it
    from YouTube. The cache also stands in for missing fields when a flat
@@ -41,7 +51,51 @@ export const Search = {
         searchCache.queries = raw.queries || {};
       }
     } catch (e) { console.warn('[MediaRade] search cache load failed:', e); }
+
+    /* verified verdicts + slim info, so prior checks are instant */
+    try {
+      licenseCachePath = Paths.file('licenseCache');
+      const lc = Paths.readJSON(licenseCachePath, null);
+      if (lc && lc.reports) Object.assign(reportCache, lc.reports);
+      if (lc && lc.info) Object.assign(infoCache, lc.info);
+    } catch (e) { console.warn('[MediaRade] license cache load failed:', e); }
+
     return searchCache;
+  },
+
+  /** Strip a full yt-dlp dict down to the fields the UI and evaluator use. */
+  slimInfo: function (info) {
+    if (!info) return null;
+    const out = { id: info.id };
+    ['title', 'channel', 'uploader', 'channel_url', 'uploader_url', 'description',
+     'license', 'tags', 'track', 'artist', 'album', 'music_sharing_info',
+     'licensed_to_youtube', 'channel_is_verified', 'age_limit', 'availability',
+     'is_live', 'was_live', 'webpage_url', 'upload_date', 'duration',
+     'view_count', 'width', 'height', 'fps', 'categories']
+      .forEach(function (k) { if (info[k] !== undefined) out[k] = info[k]; });
+    return out;
+  },
+
+  /** Debounced write of the most recently verified videos. */
+  persist: function () {
+    if (!licenseCachePath) return;
+    if (persistTimer) { clearTimeout(persistTimer); }
+    persistTimer = setTimeout(function () {
+      persistTimer = null;
+      try {
+        const ids = Object.keys(reportCache).sort(function (a, b) {
+          const ra = reportCache[a], rb = reportCache[b];
+          return String((rb && rb.checkedAt) || '').localeCompare(String((ra && ra.checkedAt) || ''));
+        }).slice(0, MAX_LICENSE_CACHE);
+        const info = {}, reports = {};
+        ids.forEach(function (id) {
+          reports[id] = reportCache[id];
+          const i = infoCache[id];
+          if (i) info[id] = Search.slimInfo(i);
+        });
+        Paths.writeJSON(licenseCachePath, { info: info, reports: reports });
+      } catch (e) { console.warn('[MediaRade] license cache save failed:', e); }
+    }, 1200);
   },
 
   /** Deterministic key for a query + the filter subset that shapes it. */
@@ -210,6 +264,7 @@ export const Search = {
     return Search.fetchInfo(id, force).then(function (info) {
       const report = License.evaluate(info);
       reportCache[id] = report;
+      Search.persist();
       Bus.emit('verified', id, report, info);
       Bus.updateResult(id, { report: report, verifying: false });
       return report;
@@ -217,6 +272,7 @@ export const Search = {
       const report = License.evaluate({ id: id });
       report.error = err.message;
       reportCache[id] = report;
+      Search.persist();
       Bus.emit('verified', id, report, null);
       Bus.updateResult(id, { report: report, verifying: false });
       return report;
@@ -263,6 +319,7 @@ export const Search = {
     searchCache.ids = {};
     searchCache.queries = {};
     try { if (cachePath) Paths.remove(cachePath); } catch (e) {}
+    try { if (licenseCachePath) Paths.remove(licenseCachePath); } catch (e) {}
   }
 };
 

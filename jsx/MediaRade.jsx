@@ -231,12 +231,25 @@ $._MediaRade = (function () {
     if (existing) return existing;
 
     var bin = ensureBin(binName || 'MediaRade', subBin);
+    var before = bin && bin.children ? bin.children.numItems : 0;
     var okImport = false;
     try { okImport = app.project.importFiles([path], true, bin, false); } catch (e) {
       throw new Error('Import failed for ' + baseName(path) + ': ' + e.toString());
     }
 
     var item = findByPath(bin, path) || findByPath(app.project.rootItem, path);
+
+    /* Fallback: getMediaPath() can be null in some versions right after an
+       import, so scan the target bin for the clip that just appeared. */
+    if (!item && bin && bin.children && bin.children.numItems > before) {
+      for (var k = before; k < bin.children.numItems; k++) {
+        var cand = bin.children[k];
+        try {
+          if (cand.type !== ProjectItemType.BIN) { item = cand; break; }
+        } catch (e2) {}
+      }
+    }
+
     if (!item && !okImport) throw new Error('Premiere would not import ' + baseName(path) + '.');
     return item;
   }

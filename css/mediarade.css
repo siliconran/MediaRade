@@ -275,7 +275,7 @@ body.is-dragging-media #app { opacity: 0.82; transition: opacity var(--ps2-dur-f
   overflow: hidden;
   box-shadow: var(--ps2-shadow);
 }
-.mr-player iframe, .mr-player video { width: 100%; height: 100%; border: 0; display: block; }
+.mr-player video { width: 100%; height: 100%; border: 0; display: block; }
 .mr-player__cover {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;

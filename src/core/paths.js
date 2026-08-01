@@ -50,6 +50,7 @@ const Paths = {
       credits: p.join(Paths.dir('compliance'), 'CREDITS.md'),
       log:     p.join(Paths.dir('logs'), 'mediarade.log'),
       searchCache: p.join(Paths.dir('cache'), 'search-cache.json'),
+      licenseCache: p.join(Paths.dir('cache'), 'license-cache.json'),
       readme:  p.join(Paths.dir('root'), 'READ-ME-FIRST.txt')
     };
     return map[key];

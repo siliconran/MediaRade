@@ -39,8 +39,7 @@
             <!-- Local preview of downloaded media + sidecar JSON reads. -->
             <Parameter>--allow-file-access-from-files</Parameter>
             <Parameter>--enable-media-stream</Parameter>
-            <!-- Embedded YouTube preview player. -->
-            <Parameter>--disable-site-isolation-trials</Parameter>
+            <!-- Let the <video> preview autoplay without a prior user gesture. -->
             <Parameter>--autoplay-policy=no-user-gesture-required</Parameter>
           </CEFCommandLine>
         </Resources>

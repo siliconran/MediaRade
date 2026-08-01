@@ -444,74 +444,88 @@ function AcquireButton(props) {
 /**
  * In-panel preview.
  *
- * Deliberately NOT a YouTube iframe: a CEP panel is served from file://, so its
- * origin is "null" and YouTube rejects the embed with "Error 153 — Video player
+ * Not a YouTube iframe: a CEP panel is served from file://, so its origin is
+ * "null" and YouTube rejects the embed with "Error 153 — Video player
  * configuration error". Instead yt-dlp resolves a progressive stream URL and a
- * plain <video> plays it. If no such stream exists, say so and offer the
- * browser rather than showing a dead player.
+ * plain <video> element plays it (YtDlp.streamUrl caches the result for the
+ * session). The stream is resolved as soon as the video is selected — not when
+ * Play is pressed — so playback starts instantly, and re-opening the same video
+ * costs nothing.
  */
 function Player(props) {
   const id = () => props.id;
+  const [mode, setMode] = createSignal('idle');  // idle | resolving | stream | err
   const [src, setSrc] = createSignal(null);
   const [err, setErr] = createSignal(null);
-  const [resolving, setResolving] = createSignal(false);
 
-  /* A new video invalidates any previously resolved stream. */
+  /* A new video resets everything and kicks off the stream resolution in the
+     background, so pressing Play later needs no waiting. */
   createEffect(function () {
-    id();
+    const vid = id();
+    if (!vid) return;
+    setMode('idle');
     setSrc(null);
     setErr(null);
-    setResolving(false);
-  });
 
-  createEffect(function () {
-    if (!props.playing() || src() || resolving() || err()) return;
-    const wanted = id();
-    setResolving(true);
+    const wanted = vid;
     YtDlp.streamUrl(wanted, 480).then(function (url) {
-      if (wanted !== id()) return;                 // user moved on
+      if (wanted !== id()) return;                  // user moved on
       setSrc(url);
-      setResolving(false);
+      if (mode() === 'resolving') setMode('stream'); // play was pressed meanwhile
     }).catch(function (e) {
       if (wanted !== id()) return;
       setErr(e.message);
-      setResolving(false);
-      props.setPlaying(false);
+      if (mode() === 'resolving') setMode('err');
     });
   });
 
+  /* Play was requested. If the prefetch already resolved, start immediately. */
+  createEffect(function () {
+    if (!props.playing()) return;
+    if (mode() === 'stream') return;
+    if (src()) { setMode('stream'); return; }
+    if (err()) { setMode('err'); props.setPlaying(false); return; }
+    setMode('resolving');
+  });
+
+  function retry() {
+    setErr(null);
+    props.setPlaying(true);   // re-enters the play effect: resolving -> stream
+  }
+
   return (
     <div class="mr-player" style={{ marginBottom: '12px' }}>
-      <Show when={src()}>
+      <Show when={mode() === 'stream' && src()}>
         <video src={src()} controls autoplay preload="auto"
           onError={() => {
             setErr('The panel could not decode this stream. Open it on YouTube instead.');
             setSrc(null);
+            setMode('err');
             props.setPlaying(false);
           }} />
       </Show>
 
-      <Show when={!src()}>
+      {/* Cover / loading / error states */}
+      <Show when={mode() === 'idle' || mode() === 'resolving' || mode() === 'err'}>
         <div class="mr-player__cover"
           style={{ backgroundImage: 'url("' + U.thumb(id(), 'hqdefault') + '")' }}
-          onClick={() => { setErr(null); props.setPlaying(true); }}>
-          <Show when={!resolving() && !err()}>
+          onClick={() => { if (mode() !== 'resolving') { setErr(null); props.setPlaying(true); } }}>
+          <Show when={mode() === 'idle'}>
             <div class="mr-player__play" innerHTML={U.icon('play', 22)} />
           </Show>
 
-          <Show when={resolving()}>
+          <Show when={mode() === 'resolving'}>
             <div class="mr-player__note">
               <Progress indeterminate />
               <span>Resolving the stream…</span>
             </div>
           </Show>
 
-          <Show when={err()}>
+          <Show when={mode() === 'err'}>
             <div class="mr-player__note mr-player__note--err" onClick={(e) => e.stopPropagation()}>
               <span>{err()}</span>
               <div class="ps2-row-gap" style={{ 'justify-content': 'center', 'margin-top': '6px' }}>
-                <Btn size="sm" label="Retry"
-                  onClick={() => { setErr(null); props.setPlaying(true); }} />
+                <Btn size="sm" label="Retry" onClick={retry} />
                 <Btn size="sm" variant="primary" label="Open on YouTube"
                   onClick={() => CEP.openInBrowser(U.watchUrl(id()))} />
               </div>
