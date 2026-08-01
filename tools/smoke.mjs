@@ -158,7 +158,7 @@ const dom = new JSDOM(html, {
   url: 'file:///D:/Projects/MediaRade/dist/index.html'
 });
 const win = dom.window;
-makeShims(win);
+const shims = makeShims(win);
 
 const errors = [];
 win.addEventListener('error', (e) => errors.push(String(e.message)));
@@ -397,19 +397,49 @@ await settle();
 check('card renders with its risk level', $('.mr-card')?.dataset.tier, 'LOW');
 check('thumbnail has a play affordance', !!$('.mr-card__playbtn'), true);
 check('card actions', $$('.mr-card__actions .ps2-btn').map(text),
-  ['V+A', 'Video', 'Audio', 'Copy credit ✱']);
+  ['Video', 'Audio', 'Copy credit ✱']);
 
 section('drag to Premiere');
-MR.Bus.patch({ view: 'library', libraryItems: [{
-  id: 'lib1', videoId: info0.id, title: 'Genuine CC BY clip', channel: 'Real Creator',
-  kind: 'video', file: 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4',
-  files: [], thumb: null, report: MR.Search.reportCache[info0.id], size: 1024, downloadedAt: Date.now()
-}] });
+shims.FILES['C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4'] = 'clip';
+MR.Bus.patch({ view: 'library', libraryItems: [
+  { id: 'lib1', videoId: info0.id, title: 'Genuine CC BY clip', channel: 'Real Creator',
+    kind: 'video', file: 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4',
+    files: [], thumb: null, report: MR.Search.reportCache[info0.id], size: 1024, downloadedAt: Date.now() },
+  { id: 'lib2', videoId: 'ggggggggggg', title: 'Gone clip', channel: 'Real Creator',
+    kind: 'video', file: 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\gone.mp4',
+    files: [], thumb: null, report: null, size: 512, downloadedAt: Date.now() }
+] });
 await settle(200);
 check('library thumbnail is a native OS drag source',
   $('.mr-lib-item__thumb')?.getAttribute('draggable'), 'true');
 check('Place button is also a drag source',
-  $$('.mr-lib-item__foot .ps2-btn').filter((b) => b.getAttribute('draggable') === 'true').length, 1);
+  $$('.mr-lib-item__foot .ps2-btn').filter((b) => b.getAttribute('draggable') === 'true').length, 2);
+
+/* A drag source that cannot hand a real file to the OS is useless — assert a
+   dragstart actually publishes the clip as a file:// uri-list (what Premiere's
+   timeline accepts) plus the raw path. */
+const dragEl = $('.mr-lib-item__thumb');
+const fakeDT = {
+  data: {}, types: [], effectAllowed: null,
+  setData(t, v) { this.data[t] = v; if (this.types.indexOf(t) < 0) this.types.push(t); },
+  getData(t) { return this.data[t] || ''; },
+  setDragImage() {}
+};
+const dragEv = new win.MouseEvent('dragstart', { bubbles: true, cancelable: true });
+Object.defineProperty(dragEv, 'dataTransfer', { value: fakeDT });
+dragEl.dispatchEvent(dragEv);
+check('dragstart publishes the file as a file:// uri-list',
+  fakeDT.getData('text/uri-list').indexOf('file:///C:/Users/dev/Documents/MediaRade/Downloads/Video/clip.mp4') > -1, true);
+check('dragstart also publishes the raw Windows path',
+  fakeDT.getData('text/plain'), 'C:\\Users\\dev\\Documents\\MediaRade\\Downloads\\Video\\clip.mp4');
+check('a dragstart for a file no longer on disk publishes nothing', (() => {
+  const gone = $$('.mr-lib-item').find((el) => (el.textContent || '').includes('Gone clip'));
+  const d = { data: {}, types: [], setData(t, v) { this.data[t] = v; if (this.types.indexOf(t) < 0) this.types.push(t); }, getData(t) { return this.data[t] || ''; } };
+  const ev = new win.MouseEvent('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'dataTransfer', { value: d });
+  gone.querySelector('.mr-lib-item__thumb').dispatchEvent(ev);
+  return d.getData('text/uri-list');
+})(), '');
 MR.Bus.patch({ view: 'browse' });
 await settle(150);
 

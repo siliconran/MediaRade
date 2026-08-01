@@ -461,6 +461,45 @@ function AboutPanel(props) {
 
 /* --- uppbeat --------------------------------------------------------------- */
 
+function EndpointsEditor() {
+  let ta;
+  onMount(function () {
+    const cur = Config.get('uppbeatEndpoints');
+    ta.value = cur ? JSON.stringify(cur, null, 2) : JSON.stringify(Uppbeat.DEFAULT_ENDPOINTS, null, 2);
+  });
+
+  function save() {
+    const raw = ta.value.trim();
+    if (!raw) { Config.set('uppbeatEndpoints', null); return; }
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('expected a JSON object');
+      Config.set('uppbeatEndpoints', parsed);
+      Toast.ok('Endpoints saved', 'Uppbeat will use these paths from now on.');
+    } catch (e) {
+      Toast.err('Not saved', 'That is not valid JSON: ' + e.message);
+    }
+  }
+
+  function resetEndpoints() {
+    Config.set('uppbeatEndpoints', null);
+    ta.value = JSON.stringify(Uppbeat.DEFAULT_ENDPOINTS, null, 2);
+    Toast.info('Endpoints reset', 'Back to the shipped defaults.');
+  }
+
+  return (
+    <Row label="API endpoints (advanced)"
+      hint="Uppbeat's API is undocumented. If a search or download breaks with a 404, the path has moved — edit these (JSON) and press <b>Save</b>.">
+      <textarea ref={ta} class="ps2-input" rows="5" spellcheck={false}
+        style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'Consolas, monospace', fontSize: '11px' }} />
+      <div class="ps2-row-gap" style={{ marginTop: '6px' }}>
+        <Btn size="sm" variant="primary" label="Save" onClick={save} />
+        <Btn size="sm" variant="ghost" label="Reset to defaults" onClick={resetEndpoints} />
+      </div>
+    </Row>
+  );
+}
+
 function UppbeatPanel() {
   const [browser] = useConfig('uppbeatBrowser');
   const s = Uppbeat.loadSession();
@@ -521,6 +560,8 @@ function UppbeatPanel() {
       </Row>
 
       <Row label="Results per search"><NumInput key="uppbeatResultCount" min={10} max={100} /></Row>
+
+      <EndpointsEditor />
 
       <div class={'mr-claimwarn' + (premium() ? ' mr-claimwarn--ok' : '')}>
         <span>{premium() ? '✓' : '⚠'}</span>

@@ -447,21 +447,12 @@ export function ResultCard(props) {
         </div>
         <div class="mr-card__actions">
           {report ? (
-            <Btn
-              size="sm"
-              variant="primary"
-              label="V+A"
-              title="Download one file with the picture and sound muxed together"
-              onClick={(e) => { e.stopPropagation(); handlers.onDownload && handlers.onDownload(r, 'both'); }}
-            />
+            <Btn size="sm" label="Video" title="Video stream only"
+              onClick={(e) => { e.stopPropagation(); handlers.onDownload && handlers.onDownload(r, 'video'); }} />
           ) : (
             <Btn size="sm" label="Verify"
               onClick={(e) => { e.stopPropagation(); handlers.onVerify && handlers.onVerify(r); }} />
           )}
-          {report ? (
-            <Btn size="sm" label="Video" title="Video stream only"
-              onClick={(e) => { e.stopPropagation(); handlers.onDownload && handlers.onDownload(r, 'video'); }} />
-          ) : null}
           {report ? (
             <Btn size="sm" label="Audio" title="Extracted audio only"
               onClick={(e) => { e.stopPropagation(); handlers.onDownload && handlers.onDownload(r, 'audio'); }} />

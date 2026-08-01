@@ -15,7 +15,8 @@ trademarks of Sony Interactive Entertainment.
   YouTube's own `sp=` protobuf so the filtering happens server-side.
 - **Audit every result** against a four-level risk model before anything can be downloaded.
   Verified verdicts are cached to `Cache\license-cache.json`, so re-opening a video or re-searching
-  the same results is instant — only new/expired videos hit the network.
+  the same results is instant — only new/expired videos hit the network. Opening a video shows a
+  **Check licence** button until it has been audited; downloads stay blocked until the verdict lands.
 - **Download** through `yt-dlp` as **Video + audio** (one muxed file), **Video only** or
   **Audio only**, with quality/container/format control, clip ranges, subtitles and SponsorBlock.
 - **Preview in the panel** — a real stream, not a YouTube embed (see below). The stream is resolved
@@ -89,8 +90,9 @@ error"*. There is no header or parameter that fixes this.
 Instead, selecting a video asks `yt-dlp` for a **progressive stream URL** (one file carrying both
 picture and sound) in the background, so pressing play hands that URL straight to a plain `<video>`
 and starts instantly. Resolved URLs are cached for the session, so re-opening the same video costs
-nothing. If a video has no progressive stream, the panel says so and offers to open it in your
-browser rather than showing a dead player.
+nothing. If a video has no progressive stream, the panel falls back to the best remaining stream
+(any codec, audio-less if that is all that exists) before giving up; if nothing resolves, it says
+so and offers to open the video in your browser rather than showing a dead player.
 
 ## Uppbeat
 
@@ -211,3 +213,16 @@ Documents\MediaRade\
 ```
 
 Respect YouTube's and Uppbeat's Terms of Service and the rights of creators.
+
+---
+
+## License
+
+MediaRade is released under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
+The interface is a CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT), which remains
+licensed separately under its own terms. PS2UI and this project are unrelated to Sony; PlayStation
+and PlayStation 2 are trademarks of Sony Interactive Entertainment.
+
+MediaRade is provided "as is", without warranty of any kind. It records what YouTube and Uppbeat
+report; it does not grant rights and is not legal advice. You are responsible for the material you
+download and how you use it.

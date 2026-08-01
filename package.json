@@ -20,7 +20,7 @@
     "creative-commons"
   ],
   "author": "rad1x",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "solid-js": "^1.9.14"
   },
