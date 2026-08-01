@@ -304,7 +304,7 @@ export const Uppbeat = {
   signIn: function (onTick) {
     const browser = Config.get('uppbeatBrowser') || 'chrome';
     const max = Config.get('uppbeatSignInTries') || 40;      // ~3.5 minutes
-    const gap = 5000;
+    const gap = 5000;                                         // 5s between cookie-copy attempts
 
     Uppbeat.openSignIn();
 
@@ -337,8 +337,10 @@ export const Uppbeat = {
         setTimeout(tick, gap);
       }
 
-      // give the browser a moment to open and the user a moment to type
-      setTimeout(tick, 4000);
+      // Wait 5s before the first attempt: the browser needs time to open (and,
+      // for an already-signed-in session, to settle on the real session before
+      // we try to copy its cookies). Each failed attempt retries after another 5s.
+      setTimeout(tick, gap);
     });
 
     run.cancel = function () { cancelled = true; };

@@ -4,9 +4,17 @@
 
    MediaRade has no timeline of its own, so there is exactly one kind of drag
    here: a native OS drag. The dragged clip's local file is published on the
-   dataTransfer (text/uri-list + text/plain + DownloadURL), which is the only
-   mechanism that can leave a CEP/CEF panel — and it is what lets you drop a
-   clip anywhere on Premiere's real timeline or into its project panel.
+   dataTransfer in two ways:
+
+   - com.adobe.cep.dnd.file.0 — the property CEP itself hands to its host, so
+     Premiere sees a real file drag and accepts the clip on its timeline and
+     project panel. Without it Premiere's timeline shows the "no drop" cursor.
+   - text/uri-list + text/plain + DownloadURL — what the OS and other apps
+     (Explorer, etc.) understand, so the same gesture still works outside Adobe.
+
+   This is the only mechanism that can leave a CEP/CEF panel, and it is what
+   lets you drop a clip anywhere on Premiere's real timeline or into its
+   project panel.
 
    Attach it only to nodes whose payload carries a real on-disk file. Anything
    still downloading has no file yet, so the drag is refused rather than
@@ -67,9 +75,11 @@ export const DnD = {
       try { dt.effectAllowed = 'copy'; } catch (err) { /* some hosts refuse this */ }
 
       // Each format is set independently so one unsupported type can never
-      // abort the whole drag. Premiere's timeline accepts text/uri-list (a
-      // file:// URL); text/plain and Files cover other drop targets.
+      // abort the whole drag. Premiere's timeline accepts com.adobe.cep.dnd.file
+      // (the CEP native file-drag property — without it the timeline shows the
+      // "not allowed" cursor); the rest cover Explorer and other drop targets.
       const formats = [
+        function () { dt.setData('com.adobe.cep.dnd.file.0', path); },
         function () { dt.setData('text/uri-list', url + '\r\n'); },
         function () { dt.setData('text/plain', path); },
         function () { dt.setData('Files', path); },
