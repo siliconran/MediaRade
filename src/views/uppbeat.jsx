@@ -1,0 +1,513 @@
+/* =============================================================================
+   views/uppbeat.jsx — Uppbeat music browser, sign-in and download
+   MediaRade by rad1x
+   ========================================================================== */
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import Bus, { state } from '../core/bus.js';
+import Config from '../core/config.js';
+import Library from '../core/library.js';
+import Ledger from '../core/ledger.js';
+import Paths from '../core/paths.js';
+import Uppbeat from '../core/uppbeat.js';
+import U from '../core/util.js';
+import { CEP } from '../core/cep.js';
+import DnD from '../ui/dragdrop.js';
+import Place from '../ui/place.js';
+import Modal from '../ui/modal.js';
+import Toast from '../ui/toast.js';
+import { Badge, Btn, Empty, Progress } from '../ui/components.jsx';
+
+const GENRE_PRESETS = [
+  'cinematic', 'lofi', 'ambient', 'corporate', 'hip hop', 'rock',
+  'electronic', 'acoustic', 'upbeat', 'emotional', 'trailer', 'vlog'
+];
+
+export function UppbeatView() {
+  const [results, setResults] = createSignal([]);
+  const [searching, setSearching] = createSignal(false);
+  const [error, setError] = createSignal(null);
+  const [signedIn, setSignedIn] = createSignal(false);
+  const [plan, setPlan] = createSignal('free');
+  const [busy, setBusy] = createSignal(null);      // trackId currently downloading
+  const [progress, setProgress] = createSignal(0);
+  const [playing, setPlaying] = createSignal(null);
+  const [signingIn, setSigningIn] = createSignal(null);   // { attempt, max } while polling
+
+  let input, audioEl;
+
+  function syncSession() {
+    const s = Uppbeat.session();
+    setSignedIn(!!s.signedIn);
+    setPlan(s.plan || 'free');
+  }
+
+  onMount(function () {
+    Uppbeat.loadSession();
+    syncSession();
+    const last = Config.get('uppbeatLastQuery');
+    if (last && input) input.value = last;
+  });
+
+  const off = Bus.on('uppbeat:session', syncSession);
+  onCleanup(function () {
+    off();
+    if (audioEl) { try { audioEl.pause(); } catch (e) {} }
+  });
+
+  const premium = createMemo(function () {
+    const p = String(plan() || 'free').toLowerCase();
+    return signedIn() && p !== 'free' && p !== 'none';
+  });
+
+  /* --- session ------------------------------------------------------------ */
+
+  /**
+   * One button does the whole thing: open uppbeat.io in the real browser, then
+   * keep polling until the session cookies appear. No password ever reaches
+   * MediaRade, and there is nothing for the user to copy or paste.
+   */
+  let signInJob = null;
+
+  function signIn() {
+    if (signingIn()) { cancelSignIn(); return; }
+    setError(null);
+    setSigningIn({ attempt: 0, max: Config.get('uppbeatSignInTries') || 40 });
+
+    signInJob = Uppbeat.signIn(function (attempt, max) {
+      setSigningIn({ attempt: attempt, max: max });
+    });
+
+    signInJob.then(function (s) {
+      signInJob = null;
+      setSigningIn(null);
+      syncSession();
+      const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
+      Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free'));
+      if (input && input.value.trim()) doSearch();
+    }).catch(function (e) {
+      signInJob = null;
+      setSigningIn(null);
+      if (e && e.cancelled) return;
+      setError(e.message);
+      Toast.err('Sign-in did not complete', e.message);
+    });
+  }
+
+  function cancelSignIn() {
+    if (signInJob && signInJob.cancel) signInJob.cancel();
+    signInJob = null;
+    setSigningIn(null);
+    Toast.info('Sign-in cancelled', 'Press Sign in again when you are ready.');
+  }
+
+function signOut() {
+    Uppbeat.clearSession();
+    syncSession();
+    setResults([]);
+    Toast.info('Signed out', 'The stored Uppbeat session was cleared.');
+  }
+
+  /* --- search -------------------------------------------------------------- */
+
+  function doSearch(q) {
+    const query = (q !== undefined ? q : input.value).trim();
+    if (!query) { Toast.info('Nothing to search', 'Type a mood, genre or track name.'); return; }
+    if (input) input.value = query;
+    Config.set('uppbeatLastQuery', query);
+
+    if (!signedIn()) {
+      setError('Sign in first — Uppbeat gates the catalogue and every download on your account.');
+      return;
+    }
+
+    setSearching(true);
+    setError(null);
+    Uppbeat.search(query).then(function (tracks) {
+      setSearching(false);
+      setResults(tracks);
+      if (!tracks.length) setError('Uppbeat returned no tracks for "' + query + '".');
+    }).catch(function (e) {
+      setSearching(false);
+      setResults([]);
+      setError(e.message);
+    });
+  }
+
+/* --- preview -------------------------------------------------------------- */
+
+  function togglePlay(t) {
+    if (!t.preview) { Toast.info('No preview', 'Uppbeat did not supply a preview URL for this track.'); return; }
+    if (playing() === t.id) {
+      try { audioEl.pause(); } catch (e) {}
+      setPlaying(null);
+      return;
+    }
+    if (!audioEl) audioEl = new Audio();
+    audioEl.src = t.preview;
+    audioEl.play().then(function () { setPlaying(t.id); })
+      .catch(function (e) { Toast.err('Preview failed', e.message); });
+    audioEl.onended = function () { setPlaying(null); };
+  }
+
+  /* --- download ------------------------------------------------------------- */
+
+  function download(t) {
+    if (busy()) { Toast.info('Busy', 'One Uppbeat download at a time.'); return; }
+    setBusy(t.id);
+    setProgress(0);
+
+    const report = Uppbeat.report(t);
+
+    Uppbeat.download(t, function (p) {
+      if (p.percent != null) setProgress(p.percent);
+    }).then(function (res) {
+      setBusy(null);
+      finishDownload(res.file, t, report);
+    }).catch(function (e) {
+      setBusy(null);
+      Toast.err('Uppbeat download failed', e.message);
+    });
+  }
+
+  /** Shared tail for both direct and assisted downloads. */
+  function finishDownload(file, track, report) {
+    try {
+      Ledger.writeSidecars(file, report, { downloadedAt: new Date().toISOString(), kind: 'audio', provider: 'uppbeat' });
+      Ledger.appendCredits(report, file);
+      Ledger.record({
+        event: 'download_complete', provider: 'uppbeat',
+        videoId: track.id, title: track.title, channel: track.artist,
+        kind: 'audio', file: file, verdict: report.level,
+        requiresAttribution: report.requiresAttribution,
+        attribution: report.attribution.short
+      });
+    } catch (e) { Paths.log('uppbeat sidecar failed: ' + e.message); }
+
+    const entry = Library.add({
+      videoId: track.id,
+      title: track.title,
+      channel: track.artist,
+      kind: 'audio',
+      provider: 'uppbeat',
+      file: file,
+      files: [file],
+      thumb: track.artwork || null,
+      report: report,
+      quality: 'uppbeat',
+      downloadedAt: Date.now()
+    });
+
+    Toast.show({
+      kind: report.requiresAttribution ? 'warn' : 'ok',
+      title: report.requiresAttribution ? 'Downloaded — credit required' : 'Downloaded',
+      text: track.title + ' by ' + track.artist +
+            (report.requiresAttribution ? '. Copy the credit before you publish.' : ''),
+      duration: 9000,
+      action: {
+        label: 'Copy credit',
+        run: function () {
+          U.copy(report.attribution.credits);
+          Toast.ok('Copied', 'Uppbeat credit is on the clipboard.');
+        }
+      }
+    });
+
+    if (Config.get('autoImport')) Place.toBin({ file: file, title: track.title, report: report, entry: entry });
+  }
+
+  /* --- assisted ingest ------------------------------------------------------- */
+
+  function ingestPicker() {
+    const found = Uppbeat.scanNew(Date.now() - 1000 * 60 * 60 * 6);   // last 6 hours
+    if (!found.length) {
+      Toast.warn('Nothing new found',
+        'No audio downloaded in the last 6 hours in ' + (Uppbeat.watchDir() || 'your Downloads folder') + '.');
+      return;
+    }
+
+    let chosen = found[0];
+    const list = U.el('div', { class: 'ps2-list', style: { marginBottom: '12px' } },
+      found.slice(0, 12).map(function (f, i) {
+        const row = U.el('div', { class: 'ps2-row' + (i === 0 ? ' is-selected' : '') }, [
+          U.el('div', { class: 'ps2-row__main' }, [
+            U.el('div', { class: 'ps2-row__title', text: f.name }),
+            U.el('div', { class: 'ps2-row__sub', text: U.bytes(f.size) + ' · ' + new Date(f.mtime).toLocaleString() })
+          ])
+        ]);
+        row.addEventListener('click', function () {
+          chosen = f;
+          U.$$('.ps2-row', list).forEach(function (n) { n.classList.remove('is-selected'); });
+          row.classList.add('is-selected');
+          const g = Uppbeat.guessFromFilename(f.name);
+          titleIn.value = g.title;
+          artistIn.value = g.artist;
+        });
+        return row;
+      }));
+
+    const guess = Uppbeat.guessFromFilename(found[0].name);
+    const titleIn = U.el('input', { class: 'ps2-input', value: guess.title, placeholder: 'Track title' });
+    const artistIn = U.el('input', { class: 'ps2-input', value: guess.artist, placeholder: 'Artist name' });
+    const pageIn = U.el('input', { class: 'ps2-input', placeholder: 'https://uppbeat.io/t/… (optional, used in the credit)' });
+
+    Modal.open({
+      title: 'Ingest an Uppbeat download',
+      body: U.el('div', { class: 'ps2-col-gap' }, [
+        U.el('div', { class: 'mr-claimwarn' }, [
+          U.el('span', { text: 'ⓘ' }),
+          U.el('span', {
+            html: 'Pick the file you just downloaded from uppbeat.io. Confirm the artist and title — ' +
+                  'those go into the credit that <b>must</b> appear in your video description on the free plan.'
+          })
+        ]),
+        list,
+        U.el('div', { class: 'mr-field' }, [U.el('span', { class: 'mr-field__label', text: 'Track title' }), titleIn]),
+        U.el('div', { class: 'mr-field' }, [U.el('span', { class: 'mr-field__label', text: 'Artist' }), artistIn]),
+        U.el('div', { class: 'mr-field' }, [U.el('span', { class: 'mr-field__label', text: 'Track page' }), pageIn])
+      ]),
+      buttons: [
+        { label: 'Cancel', run: function () { Modal.close(); } },
+        {
+          label: 'Ingest',
+          variant: 'primary',
+          run: function () {
+            Modal.close();
+            try {
+              const res = Uppbeat.ingest(chosen.file, {
+                title: titleIn.value.trim(), artist: artistIn.value.trim(), page: pageIn.value.trim() || undefined
+              });
+              finishDownload(res.file, res.track, res.report);
+            } catch (e) { Toast.err('Ingest failed', e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  /* --- render ---------------------------------------------------------------- */
+
+  return (
+    <>
+      <div class="mr-view__toolbar">
+        <div class="mr-searchbar">
+          <input ref={input} class="ps2-input" type="text"
+            placeholder="Search Uppbeat — mood, genre, track or artist…"
+            onKeyDown={(e) => { if (e.key === 'Enter') doSearch(); }} />
+          <Btn variant="primary" label="Search" onClick={() => doSearch()} />
+        </div>
+
+        <div class="mr-filters" style={{ 'margin-bottom': '6px' }}>
+          <div class="mr-filters__group">
+            <span class="mr-filters__label">Account</span>
+            <Show
+              when={signedIn()}
+              fallback={<Badge text={signingIn() ? 'waiting for browser…' : 'not signed in'}
+                kind={signingIn() ? 'info' : 'mute'} />}
+            >
+              <Badge text={premium() ? 'premium · ' + plan() : 'free plan'} kind={premium() ? 'ok' : 'warn'} />
+            </Show>
+
+            <Show when={!signedIn()}>
+              <Btn size="sm" variant={signingIn() ? 'danger' : 'primary'}
+                label={signingIn() ? 'Cancel sign-in' : 'Sign in'}
+                title="Opens uppbeat.io in your browser. Sign in there and MediaRade picks the session up on its own — your password never reaches this panel."
+                onClick={signIn} />
+            </Show>
+
+            <Show when={signedIn()}>
+              <Btn size="sm" label="Refresh" title="Re-import the session and re-check your plan"
+                onClick={signIn} />
+              <Btn size="sm" variant="ghost" label="Sign out" onClick={signOut} />
+            </Show>
+          </div>
+
+          <div class="mr-filters__group">
+            <Btn size="sm" variant="ghost" label="Open uppbeat.io"
+              onClick={() => Uppbeat.openSite('/browse/music')} />
+            <Btn size="sm" variant="ghost" label="Ingest a file"
+              title="Fallback: add a track you downloaded from the site yourself, with its credit"
+              onClick={ingestPicker} />
+          </div>
+        </div>
+
+        <Show when={signingIn()}>
+          <div class="mr-claimwarn" style={{ 'margin-bottom': '6px' }}>
+            <span>⏳</span>
+            <span>
+              {'Waiting for you to sign in at uppbeat.io in ' + (Config.get('uppbeatBrowser') || 'chrome') +
+               '. MediaRade is checking for the session every few seconds (' +
+               signingIn().attempt + '/' + signingIn().max + ') and will pick it up automatically. ' +
+               'If nothing happens, make sure that is the browser you signed in with — you can change it in Setup.'}
+            </span>
+          </div>
+        </Show>
+
+        <div class="mr-presets">
+          <For each={GENRE_PRESETS}>
+            {(g) => <button class="ps2-chip" onClick={() => doSearch(g)}>{g}</button>}
+          </For>
+        </div>
+
+        {/* the credit rule, stated up front */}
+        <div class={'mr-claimwarn' + (premium() ? ' mr-claimwarn--ok' : '')}>
+          <span>{premium() ? '✓' : '⚠'}</span>
+          <Show
+            when={!premium()}
+            fallback={
+              <span innerHTML={
+                '<b>Premium plan detected.</b> Your plan widens catalogue access and download limits. ' +
+                'Check your plan\'s scope before using a track in paid advertising or for a client — ' +
+                'MediaRade still writes the credit and the licence record with every download.'} />
+            }
+          >
+            <span innerHTML={
+              '<b>Free plan: you must credit the artist.</b> Every free Uppbeat download comes with a credit that has ' +
+              'to appear wherever the track is used — normally the video description. That credit is what tells ' +
+              'YouTube the track is licensed to you; <b>without it the licence does not apply and the track can ' +
+              'still be claimed.</b> Each track needs its own credit, in every video it appears in. ' +
+              'MediaRade writes it to <code>attribution.txt</code> and <code>CREDITS.md</code>, and every ' +
+              'download gives you a <b>Copy credit</b> button.'} />
+          </Show>
+        </div>
+      </div>
+
+      <div class="mr-view__body">
+        <Show when={searching()}>
+          <div style={{ padding: '4px 0 14px' }}>
+            <Progress indeterminate />
+            <div class="ps2-caption" style={{ 'margin-top': '8px', 'text-align': 'center' }}>Searching Uppbeat…</div>
+          </div>
+        </Show>
+
+        <Show when={!searching() && error()}>
+          <div class="mr-claimwarn" style={{ 'margin-bottom': '12px' }}>
+            <span>⚠</span><span>{error()}</span>
+          </div>
+        </Show>
+
+        <Show when={!searching() && !signedIn() && !results().length && !error()}>
+          <Empty
+            title="Sign in to Uppbeat"
+            hint={
+              'Press <b>Sign in</b> and MediaRade opens uppbeat.io in your browser. Sign in there as normal — ' +
+              'the panel never sees your password — and it picks up the session on its own, then unlocks the ' +
+              'catalogue and downloads for your plan.'}
+            action={<Btn variant="primary" label={signingIn() ? 'Cancel sign-in' : 'Sign in'} onClick={signIn} />}
+          />
+        </Show>
+
+        <Show when={!searching() && signedIn() && !results().length && !error()}>
+          <Empty title="Search Uppbeat"
+            hint={signedIn()
+              ? 'Type a mood or genre above. Downloads land in <code>Downloads\\Audio\\Uppbeat</code>.'
+              : 'Sign in and import your session first — the catalogue and downloads are gated on your account.'} />
+        </Show>
+
+        <Show when={results().length > 0}>
+          <div class="mr-results">
+            <For each={results()}>
+              {(t) => (
+                <TrackCard
+                  t={t}
+                  premium={premium()}
+                  playing={playing() === t.id}
+                  busy={busy() === t.id}
+                  progress={progress()}
+                  onPlay={() => togglePlay(t)}
+                  onDownload={() => download(t)}
+                />
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </>
+  );
+}
+
+/* --- one track ------------------------------------------------------------- */
+
+function TrackCard(props) {
+  const t = () => props.t;
+
+  const local = createMemo(function () {
+    return state.libraryItems.filter(function (i) {
+      return i.provider === 'uppbeat' && i.videoId === t().id;
+    })[0] || null;
+  });
+
+  function copyCredit() {
+    U.copy(Uppbeat.credit(t()).credits);
+    Toast.ok('Copied', 'Uppbeat credit is on the clipboard — paste it into your video description.');
+  }
+
+  const payload = () => {
+    const e = local();
+    if (!e) return null;
+    return {
+      kind: 'audio', title: e.title, file: e.file, nodeId: e.nodeId || null,
+      report: e.report, thumb: e.thumb, entry: e
+    };
+  };
+
+  return (
+    <div class="mr-card" data-tier={props.premium ? 'LOW' : 'MODERATE'}>
+      <div class="mr-card__thumb mr-card__thumb--audio"
+        style={t().artwork ? { 'background-image': 'url("' + t().artwork + '")' } : {}}
+        onClick={props.onPlay}>
+        <div class="mr-card__playbtn">{props.playing ? '❚❚' : '▶'}</div>
+        {t().duration ? <span class="mr-card__dur">{U.hhmmss(t().duration)}</span> : null}
+      </div>
+
+      <div class="mr-card__body">
+        <div class="mr-card__title" title={t().title}>{t().title}</div>
+        <div class="mr-card__meta">
+          <span class="ps2-truncate">{t().artist}</span>
+          {t().bpm ? <span>{t().bpm + ' BPM'}</span> : null}
+          {t().genres.length ? <span>{t().genres.slice(0, 2).join(', ')}</span> : null}
+        </div>
+
+        <div class="mr-card__tags">
+          <Badge text={props.premium ? 'covered by your plan' : 'credit required'} kind={props.premium ? 'ok' : 'warn'} />
+          {t().premium && !props.premium ? <Badge text="premium track" kind="crit" /> : null}
+          {local() ? <Badge text="downloaded" kind="ok" /> : null}
+        </div>
+
+        <Show when={props.busy}>
+          <Progress percent={props.progress} />
+        </Show>
+
+        <div class="mr-card__actions">
+          <Btn size="sm" label={props.playing ? 'Pause' : 'Preview'} onClick={props.onPlay} />
+
+          <Show
+            when={!local()}
+            fallback={
+              <>
+                <Btn size="sm" variant="primary" label="Place"
+                  ref={(el) => DnD.native(el, payload)}
+                  title="Insert at the playhead — or drag this straight onto Premiere's timeline"
+                  onClick={() => Place.quick(payload())} />
+                <Btn size="sm" label="⤴" title="Reveal in Explorer"
+                  onClick={() => CEP.revealInExplorer(local().file)} />
+              </>
+            }
+          >
+            <Btn size="sm" variant="primary" label={props.busy ? 'Downloading…' : 'Download'}
+              disabled={props.busy} onClick={props.onDownload} />
+          </Show>
+
+          {/* the credit is one click away from every track, always */}
+          <Btn size="sm" label="Copy credit"
+            title="Copy the Uppbeat credit for this track — paste it into your video description"
+            onClick={copyCredit} />
+
+          <Btn size="sm" variant="ghost" label="↗" title="Open this track on uppbeat.io"
+            onClick={() => CEP.openInBrowser(t().page)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default UppbeatView;

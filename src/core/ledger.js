@@ -1,0 +1,229 @@
+/* =============================================================================
+   ledger.js — append-only compliance record + attribution sidecars
+   MediaRade by rad1x
+
+   Every download, every override, every strict-mode change lands here. The file
+   is JSONL so it survives partial writes and can be handed to someone else.
+   ========================================================================== */
+import Config from './config.js';
+import Paths from './paths.js';
+import Bus from './bus.js';
+import License from './license.js';
+import { state } from './bus.js';
+import { CEP } from './cep.js';
+
+export const Ledger = {
+
+  /** Append one entry. Never throws — a logging failure must not kill a job. */
+  record: function (entry) {
+    if (!Config.get('ledgerEnabled')) return null;
+    const row = Object.assign({
+      at: new Date().toISOString(),
+      panel: 'MediaRade 1.0.0',
+      project: (state.project && state.project.name) || null
+    }, entry);
+    try {
+      Paths.appendLine(Paths.file('ledger'), JSON.stringify(row));
+      Bus.emit('ledger', row);
+    } catch (e) {
+      console.warn('[MediaRade] ledger write failed:', e);
+    }
+    return row;
+  },
+
+  /** Newest first. */
+  read: function (limit) {
+    const raw = Paths.read(Paths.file('ledger'), '');
+    if (!raw) return [];
+    const rows = raw.split(/\r?\n/).filter(Boolean).map(function (l) {
+      try { return JSON.parse(l); } catch (e) { return null; }
+    }).filter(Boolean);
+    rows.reverse();
+    return limit ? rows.slice(0, limit) : rows;
+  },
+
+  stats: function () {
+    const rows = Ledger.read();
+    const s = { total: 0, verified: 0, overridden: 0, blocked: 0, byTier: {} };
+    rows.forEach(function (r) {
+      if (r.event === 'download_complete') {
+        s.total++;
+        if (r.verdict === 'LOW') s.verified++;
+        if (r.override) s.overridden++;
+        s.byTier[r.verdict] = (s.byTier[r.verdict] || 0) + 1;
+      }
+      if (r.event === 'download_blocked') s.blocked++;
+    });
+    return s;
+  },
+
+  /* --- sidecars --------------------------------------------------------- */
+
+  /**
+   * Write <name>.license.json and, for CC material, <name>.attribution.txt
+   * beside the media file (and a copy in Licenses\ so nothing is lost when
+   * the media is moved).
+   */
+  writeSidecars: function (mediaPath, report, extra) {
+    if (!Config.get('writeSidecars') || !mediaPath) return null;
+    const path = CEP.path;
+    const dir  = path.dirname(mediaPath);
+    const base = path.basename(mediaPath, path.extname(mediaPath));
+    const payload = License.sidecar(report, Object.assign({ mediaFile: mediaPath }, extra || {}));
+    const written = [];
+
+    try {
+      const jsonPath = path.join(dir, base + '.license.json');
+      Paths.writeJSON(jsonPath, payload);
+      written.push(jsonPath);
+      Paths.writeJSON(path.join(Paths.dir('licenses'), base + '.license.json'), payload);
+    } catch (e) { console.warn('[MediaRade] sidecar json failed:', e); }
+
+    if (report.attribution) {
+      try {
+        const txtPath = path.join(dir, base + '.attribution.txt');
+        Paths.write(txtPath, Ledger.attributionText(report, mediaPath));
+        written.push(txtPath);
+      } catch (e) { console.warn('[MediaRade] attribution txt failed:', e); }
+    }
+
+    return written;
+  },
+
+  attributionText: function (report, mediaPath) {
+    const a = report.attribution;
+    const L = [
+      'ATTRIBUTION — required by the licence',
+      '=====================================',
+      '',
+      a.plain,
+      '',
+      'Title    : ' + a.title,
+      'Creator  : ' + a.author,
+      'Channel  : ' + (a.channelUrl || 'n/a'),
+      'Source   : ' + a.source,
+      'Licence  : ' + a.license + '  (' + a.licenseUrl + ')',
+      'File     : ' + (mediaPath || 'n/a'),
+      'Verified : ' + report.checkedAt,
+      '',
+      'Paste this into your credits, description or an on-screen card:',
+      '',
+      '  ' + a.credits,
+      ''
+    ];
+    if (report.obligations && report.obligations.length) {
+      L.push('OBLIGATIONS', '-----------');
+      report.obligations.forEach(function (o) { L.push('* ' + o.key + ': ' + o.text); });
+      L.push('');
+    }
+    const flags = (report.signals || []).filter(function (s) { return s.severity === 'crit' || s.severity === 'warn'; });
+    if (flags.length) {
+      L.push('OUTSTANDING RISKS', '-----------------');
+      flags.forEach(function (s) { L.push('[' + s.severity.toUpperCase() + '] ' + s.label + ' — ' + s.detail); });
+      L.push('');
+    }
+    L.push('Recorded by MediaRade (by rad1x). Evidence of due diligence, not legal advice.');
+    return L.join('\r\n');
+  },
+
+  /** Append to Compliance\CREDITS.md — the file you ship with the cut. */
+  appendCredits: function (report, mediaPath) {
+    if (!Config.get('writeCredits') || !report.attribution) return;
+    const file = Paths.file('credits');
+    if (!Paths.exists(file)) {
+      Paths.write(file, [
+        '# Credits',
+        '',
+        'Generated by MediaRade (by rad1x). Every entry below carries a licence',
+        'obligation that must appear in the published work.',
+        ''
+      ].join('\r\n'));
+    }
+    const a = report.attribution;
+    const block = [
+      '',
+      '## ' + a.title,
+      '',
+      '- **Creator:** ' + a.author,
+      '- **Source:** ' + a.source,
+      '- **Licence:** [' + a.license + '](' + a.licenseUrl + ')',
+      '- **File:** `' + (mediaPath || '') + '`',
+      '- **Verified:** ' + report.checkedAt,
+      '',
+      '> ' + a.credits,
+      ''
+    ].join('\r\n');
+    try { CEP.fs.appendFileSync(file, block, 'utf8'); } catch (e) {}
+  },
+
+  /* --- events ------------------------------------------------------------ */
+
+  logDownloadStart: function (job, report) {
+    return Ledger.record({
+      event: 'download_start',
+      videoId: job.id, url: job.url, title: job.title, channel: job.channel,
+      kind: job.kind, verdict: report ? License.level(report) : 'UNKNOWN',
+      confidence: report ? report.score : null,
+      strictMode: Config.get('strictMode'),
+      override: !!job.override,
+      overrideReason: job.overrideReason || null,
+      acknowledgement: job.ack || null
+    });
+  },
+
+  logDownloadComplete: function (job, report, file) {
+    return Ledger.record({
+      event: 'download_complete',
+      videoId: job.id, url: job.url, title: job.title, channel: job.channel,
+      kind: job.kind, file: file,
+      verdict: report ? License.level(report) : 'UNKNOWN',
+      confidence: report ? report.score : null,
+      licenseField: report ? report.licenseField : null,
+      requiresAttribution: report ? report.requiresAttribution : false,
+      attribution: report && report.attribution ? report.attribution.plain : null,
+      override: !!job.override,
+      overrideReason: job.overrideReason || null
+    });
+  },
+
+  logBlocked: function (info, report) {
+    return Ledger.record({
+      event: 'download_blocked',
+      videoId: info.id, title: info.title, channel: info.channel || info.uploader,
+      verdict: License.level(report), confidence: report ? report.score : null,
+      reasons: report.gate.reasons
+    });
+  },
+
+  exportReport: function () {
+    const rows = Ledger.read();
+    const stats = Ledger.stats();
+    const lines = [
+      '# MediaRade licence report',
+      '',
+      'Generated ' + new Date().toISOString() + ' by MediaRade (by rad1x).',
+      '',
+      '| Metric | Count |',
+      '| --- | --- |',
+      '| Completed downloads | ' + stats.total + ' |',
+      '| LOW RISK (verified Creative Commons) | ' + stats.verified + ' |',
+      '| Manual overrides | ' + stats.overridden + ' |',
+      '| Blocked by the risk checker | ' + stats.blocked + ' |',
+      '',
+      '## Entries',
+      '',
+      '| Date | Event | Title | Verdict | Override |',
+      '| --- | --- | --- | --- | --- |'
+    ];
+    rows.forEach(function (r) {
+      lines.push('| ' + r.at + ' | ' + r.event + ' | ' +
+        String(r.title || '').replace(/\|/g, '/') + ' | ' + (r.verdict || '') + ' | ' +
+        (r.override ? 'YES — ' + String(r.overrideReason || '').replace(/\|/g, '/') : '') + ' |');
+    });
+    const out = CEP.path.join(Paths.dir('compliance'), 'licence-report-' + Date.now() + '.md');
+    Paths.write(out, lines.join('\r\n'));
+    return out;
+  }
+};
+
+export default Ledger;
