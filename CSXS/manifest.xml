@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MediaRade — YouTube acquisition & license-verification panel for Adobe Premiere Pro
+  by rad1x
+-->
+<ExtensionManifest Version="9.0"
+                   ExtensionBundleId="com.rad1x.mediarade"
+                   ExtensionBundleVersion="1.0.0"
+                   ExtensionBundleName="MediaRade"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <ExtensionList>
+    <Extension Id="com.rad1x.mediarade.panel" Version="1.0.0"/>
+  </ExtensionList>
+
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[14.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+
+  <DispatchInfoList>
+    <Extension Id="com.rad1x.mediarade.panel">
+      <DispatchInfo>
+        <Resources>
+          <!-- The panel loads the Vite build. Run `npm run build` after editing src/. -->
+          <MainPath>./dist/index.html</MainPath>
+          <ScriptPath>./jsx/MediaRade.jsx</ScriptPath>
+          <CEFCommandLine>
+            <!-- Node.js is required: MediaRade shells out to yt-dlp / ffmpeg. -->
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+            <!-- Local preview of downloaded media + sidecar JSON reads. -->
+            <Parameter>--allow-file-access-from-files</Parameter>
+            <Parameter>--enable-media-stream</Parameter>
+            <!-- Embedded YouTube preview player. -->
+            <Parameter>--disable-site-isolation-trials</Parameter>
+            <Parameter>--autoplay-policy=no-user-gesture-required</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>MediaRade</Menu>
+          <Geometry>
+            <Size>
+              <Height>780</Height>
+              <Width>480</Width>
+            </Size>
+            <MinSize>
+              <Height>420</Height>
+              <Width>360</Width>
+            </MinSize>
+            <MaxSize>
+              <Height>4000</Height>
+              <Width>4000</Width>
+            </MaxSize>
+          </Geometry>
+          <Icons/>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

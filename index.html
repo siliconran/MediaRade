@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MediaRade</title>
+</head>
+<body>
+
+<!-- ambient PS2 field ------------------------------------------------------ -->
+<div class="ps2-ambient" id="ambient">
+  <div class="ps2-ambient__towers" id="towers"></div>
+  <canvas class="ps2-ambient__cubes" id="cubes"></canvas>
+</div>
+<div class="ps2-veil"></div>
+
+<!-- boot ------------------------------------------------------------------- -->
+<div class="ps2-boot" id="boot">
+  <div class="ps2-cube" style="width:56px;height:56px;perspective:420px">
+    <div class="ps2-cube__inner">
+      <i class="ps2-cube__face"></i><i class="ps2-cube__face"></i><i class="ps2-cube__face"></i>
+      <i class="ps2-cube__face"></i><i class="ps2-cube__face"></i><i class="ps2-cube__face"></i>
+    </div>
+  </div>
+  <div class="ps2-boot__mark">MEDIARADE</div>
+  <div class="ps2-boot__sub">by rad1x</div>
+</div>
+
+<!-- icon sprite ------------------------------------------------------------ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-browse"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-video"><rect x="2" y="5" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/></g>
+    <g id="i-queue"><path d="M12 3v12M12 15l-4.5-4.5M12 15l4.5-4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 19h17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-library"><rect x="3" y="4" width="5" height="16" rx="1.2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="10" y="4" width="5" height="16" rx="1.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M17.6 5.4 21 18.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-music"><path d="M9 18V5.5l11-2V16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><ellipse cx="6.5" cy="18" rx="3.5" ry="2.8" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="17.5" cy="16" rx="3.5" ry="2.8" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-shield"><path d="M12 3 4.5 6v6c0 4.6 3.2 8 7.5 9 4.3-1 7.5-4.4 7.5-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m8.6 12 2.4 2.4 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-log"><rect x="4" y="3" width="16" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-gear"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-play"><path d="M7 4.5v15L20 12z" fill="currentColor"/></g>
+  </defs>
+</svg>
+
+<!-- app (Solid shell mounts here) ----------------------------------------- -->
+<div id="app"></div>
+
+<div class="mr-modal" id="modal"><div class="ps2-panel mr-modal__box" id="modalBox"></div></div>
+<div class="mr-toasts" id="toasts"></div>
+
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MediaRade — dev harness</title>
+  <script>
+  /* ---------------------------------------------------------------------------
+     Dev harness — open this file directly in a browser to exercise the panel
+     without Premiere. It fakes the two things CEP provides and a plain browser
+     does not: Node modules (cep_node.require) and the ExtendScript bridge
+     (__adobe_cep__). Everything else is the real shipped bundle from dist/.
+
+     Not part of the extension. Nothing here is loaded inside Premiere.
+     ------------------------------------------------------------------------ */
+  (function () {
+    var FILES = {};                       // path -> string
+    var DIRS  = { 'C:\\Users\\dev\\Documents': true };
+
+    function norm(p) { return String(p).replace(/\//g, '\\'); }
+
+    var path = {
+      join: function () {
+        return norm(Array.prototype.slice.call(arguments).filter(Boolean).join('\\')).replace(/\\+/g, '\\');
+      },
+      dirname: function (p) { p = norm(p); return p.slice(0, p.lastIndexOf('\\')) || '\\'; },
+      basename: function (p, ext) {
+        p = norm(p); var b = p.slice(p.lastIndexOf('\\') + 1);
+        return ext && b.slice(-ext.length) === ext ? b.slice(0, -ext.length) : b;
+      },
+      extname: function (p) { var b = path.basename(p); var i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; }
+    };
+
+    var fs = {
+      existsSync: function (p) { p = norm(p); return !!FILES[p] || !!DIRS[p]; },
+      mkdirSync: function (p) { DIRS[norm(p)] = true; },
+      readFileSync: function (p) {
+        p = norm(p);
+        if (!(p in FILES)) { var e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; }
+        return FILES[p];
+      },
+      writeFileSync: function (p, d) { FILES[norm(p)] = String(d); },
+      appendFileSync: function (p, d) { p = norm(p); FILES[p] = (FILES[p] || '') + String(d); },
+      renameSync: function (a, b) { a = norm(a); b = norm(b); FILES[b] = FILES[a]; delete FILES[a]; },
+      unlinkSync: function (p) { delete FILES[norm(p)]; },
+      copyFileSync: function (a, b) { FILES[norm(b)] = FILES[norm(a)]; },
+      readdirSync: function () { return []; },
+      statSync: function (p) {
+        p = norm(p);
+        if (!(p in FILES) && !DIRS[p]) { var e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }
+        return {
+          size: (FILES[p] || '').length, mtimeMs: Date.now(),
+          isFile: function () { return p in FILES; },
+          isDirectory: function () { return !!DIRS[p]; }
+        };
+      },
+      createWriteStream: function () {
+        return { on: function () {}, close: function (cb) { cb && cb(); }, write: function () {}, end: function () {} };
+      }
+    };
+
+    /* Answers plausibly per invocation: `-g` yields a progressive stream URL so
+       the preview path can be exercised; anything else yields a binary path. */
+    function fakeChild(args) {
+      var h = {}, argv = args || [];
+      var child = {
+        pid: 1234,
+        stdout: { setEncoding: function () {}, on: function (e, f) { h['out:' + e] = f; }, pipe: function () {} },
+        stderr: { setEncoding: function () {}, on: function (e, f) { h['err:' + e] = f; } },
+        on: function (e, f) { h[e] = f; },
+        kill: function () {}
+      };
+      var out = argv.indexOf('-g') > -1
+        ? 'https://rr4---sn-example.googlevideo.com/videoplayback?expire=1&itag=18\n'
+        : 'C:\\tools\\yt-dlp.exe\n';
+      setTimeout(function () {
+        if (h['out:data']) h['out:data'](out);
+        if (h.close) h.close(0);
+      }, 10);
+      return child;
+    }
+
+    var modules = {
+      path: path,
+      fs: fs,
+      os: { homedir: function () { return 'C:\\Users\\dev'; }, platform: function () { return 'win32'; } },
+      child_process: { spawn: function (exe, args) { return fakeChild(args); } },
+      https: { get: function () { return { on: function () {}, destroy: function () {} }; } },
+      url: { parse: function (u) { var a = document.createElement('a'); a.href = u;
+             return { protocol: a.protocol, hostname: a.hostname, path: a.pathname + a.search }; } }
+    };
+
+    window.cep_node = { require: function (m) {
+      if (modules[m]) return modules[m];
+      throw new Error('harness: no module ' + m);
+    } };
+
+    /* --- ExtendScript host ------------------------------------------------ */
+    var SEQ = {
+      name: 'Harness Sequence', id: 'seq-1', playhead: 12.5, inPoint: 4, outPoint: 30,
+      fps: 25, videoTracks: 3, audioTracks: 4, end: 180, zeroPoint: 0
+    };
+
+    window.__adobe_cep__ = {
+      evalScript: function (script, cb) {
+        var fn = (script.match(/\$\._MediaRade\.(\w+)/) || [])[1];
+        var data = {};
+        if (fn === 'ping') data = { version: '1.0.0', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
+        else if (fn === 'getState') data = { project: { name: 'Harness.prproj', path: 'C:\\p' }, sequence: SEQ };
+        else if (fn === 'getTracks') data = { video: 3, audio: 4 };
+        else if (fn === 'importFile') data = { name: 'clip.mp4', nodeId: 'node-1', path: 'C:\\clip.mp4' };
+        else if (fn === 'place') data = { sequence: SEQ.name, position: SEQ.playhead, track: 'V1+A1',
+                                          mode: 'overwrite', item: { nodeId: 'node-1' }, created: false };
+        setTimeout(function () { cb(JSON.stringify({ ok: true, data: data })); }, 5);
+      },
+      getHostEnvironment: function () {
+        return JSON.stringify({ appName: 'PPRO', appVersion: '25.0', appLocale: 'en_US' });
+      },
+      getSystemPath: function (t) {
+        return t === 'myDocuments' ? 'file:///C:/Users/dev/Documents' : 'file:///C:/app';
+      },
+      addEventListener: function () {},
+      removeEventListener: function () {},
+      invokeSync: function () { return ''; },
+      resizeContent: function () {}
+    };
+
+    window.__MR_HARNESS__ = { FILES: FILES, DIRS: DIRS, SEQ: SEQ };
+  })();
+  </script>
+  <!-- Load the bundle with a cache-buster: browsers hold on to file:// scripts
+       hard, and a stale bundle looks exactly like a broken feature. -->
+  <script>
+  (function () {
+    var v = '?t=' + Date.now();
+    document.write('<link rel="stylesheet" href="../dist/css/style.css' + v + '">');
+    document.write('<scr' + 'ipt defer src="../dist/js/mediarade.js' + v + '"></scr' + 'ipt>');
+  })();
+  </script>
+</head>
+<body>
+
+<div class="ps2-ambient" id="ambient">
+  <div class="ps2-ambient__towers" id="towers"></div>
+  <canvas class="ps2-ambient__cubes" id="cubes"></canvas>
+</div>
+<div class="ps2-veil"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-browse"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-video"><rect x="2" y="5" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/></g>
+    <g id="i-queue"><path d="M12 3v12M12 15l-4.5-4.5M12 15l4.5-4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 19h17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-library"><rect x="3" y="4" width="5" height="16" rx="1.2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="10" y="4" width="5" height="16" rx="1.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M17.6 5.4 21 18.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-music"><path d="M9 18V5.5l11-2V16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><ellipse cx="6.5" cy="18" rx="3.5" ry="2.8" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="17.5" cy="16" rx="3.5" ry="2.8" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-shield"><path d="M12 3 4.5 6v6c0 4.6 3.2 8 7.5 9 4.3-1 7.5-4.4 7.5-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m8.6 12 2.4 2.4 4.4-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-log"><rect x="4" y="3" width="16" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-gear"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-play"><path d="M7 4.5v15L20 12z" fill="currentColor"/></g>
+  </defs>
+</svg>
+
+<div id="app"></div>
+<div class="mr-modal" id="modal"><div class="ps2-panel mr-modal__box" id="modalBox"></div></div>
+<div class="mr-toasts" id="toasts"></div>
+</body>
+</html>
