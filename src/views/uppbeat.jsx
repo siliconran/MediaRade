@@ -138,6 +138,24 @@ export function UppbeatView() {
       }
     });
 
+    /* Manual plan override — last-ditch fix for the "free on a paid account"
+       case, so the credit banner stays off and premium tracks resolve. */
+    const forcePlanBtn = U.el('label', { class: 'ps2-check', title: 'Skip plan auto-detection and treat this account as paid' }, [
+      U.el('input', { type: 'checkbox' }),
+      U.el('span', { text: 'This account is paid (Creator / Pro) — don\u2019t auto-detect plan' })
+    ]);
+    forcePlanBtn.addEventListener('change', function () {
+      const on = forcePlanBtn.querySelector('input').checked;
+      if (on) {
+        Uppbeat.setPlan('creator');
+        withSession(Uppbeat.session());
+        setStatus('Plan forced to paid (Creator). Premium tracks are unlocked.', 'ok', '');
+      } else {
+        Uppbeat.setPlan('redetect').then(withSession);
+        setStatus('Plan override cleared — re-detecting from the account.', '', '');
+      }
+    });
+
     /* Pull out a real browser window (the system default) so signing in is one
        jump away, and the session can be imported straight after. */
     Uppbeat.openSignIn();
@@ -168,7 +186,11 @@ export function UppbeatView() {
             'In Cookie Editor (or DevTools → Application → Cookies → <code>uppbeat.io</code>), find <b>auth_token</b>, copy its <b>value</b> into the box above — that single cookie is the whole login.' }),
           U.el('hr', { class: 'ps2-hr' }),
           manualText,
-          U.el('div', {}, [ manualBtn ])
+          U.el('div', {}, [ manualBtn ]),
+          U.el('hr', { class: 'ps2-hr' }),
+          forcePlanBtn,
+          U.el('div', { class: 'ps2-caption', html:
+            '<b>Plan still reads "free"?</b> If Uppbeat won\u2019t report the account level, tick the box above to manually mark it paid (Creator/Pro) so premium tracks unlock.' })
         ])
       ]),
       buttons: [{ label: 'Close', run: function () { Modal.close(); } }]

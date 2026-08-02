@@ -169,6 +169,32 @@ function fill(tpl, vars) {
 
 /* --- HTTP ---------------------------------------------------------------- */
 
+/* Every app request should look like it originates from Uppbeat's own in-site
+   SPA. If it doesn't, Uppbeat anti-bot flags it: search comes back 429
+   ("rate-limited") and /me silently fails, so the plan reads "free" on a paid
+   account. A realistic User-Agent + AJAX/origin headers keeps us under the
+   radar, and the XSRF cookie is reflected back the way Laravel expects. */
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function sessionHeaders(extra) {
+  const h = Object.assign({
+    'User-Agent': BROWSER_UA,
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Origin': BASE,
+    'Referer': BASE + '/',
+    'Pragma': 'no-cache',
+    'Cache-Control': 'no-cache'
+  }, extra || {});
+  if (session.cookies) {
+    h.Cookie = session.cookies;
+    const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
+    if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
+  }
+  return h;
+}
+
 /**
  * GET a URL with the imported Uppbeat session attached.
  * @returns {Promise<{status:number, headers:object, body:string}>}
@@ -181,13 +207,7 @@ function httpGet(url, opts) {
     catch (e) { return reject(new Error('Node is unavailable in this panel, so Uppbeat cannot be reached.')); }
 
     const parsed = urlmod.parse(url);
-    const headers = Object.assign({
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MediaRade/1.0',
-      'Accept': opts.accept || 'application/json, text/plain, */*',
-      'Accept-Language': 'en-GB,en;q=0.9',
-      'Referer': BASE + '/'
-    }, opts.headers || {});
-    if (session.cookies) headers.Cookie = session.cookies;
+    const headers = sessionHeaders({ 'Accept': opts.accept || 'application/json, text/plain, */*' });
 
     const req = https.get({
       protocol: parsed.protocol,
@@ -227,12 +247,7 @@ function httpDownload(url, destPath, onProgress, depth) {
     catch (e) { return reject(new Error('Node is unavailable in this panel.')); }
 
     const parsed = urlmod.parse(url);
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MediaRade/1.0',
-      'Accept': '*/*',
-      'Referer': BASE + '/'
-    };
-    if (session.cookies) headers.Cookie = session.cookies;
+    const headers = sessionHeaders({ 'Accept': '*/*' });
 
     Paths.ensureDir(CEP.path.dirname(destPath));
     const tmp = destPath + '.part';
@@ -291,7 +306,7 @@ function explainStatus(status, what) {
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
   if (status === 404) return 'Uppbeat returned 404 for the ' + what + ' endpoint. Their API path has probably changed — update it in Setup › Uppbeat.';
-  if (status === 429) return 'Uppbeat is rate-limiting you. Wait a few minutes.';
+  if (status === 429) return 'Uppbeat is refusing these requests (429). Usually it flags the client as a bot — re-import your session (press "Sign in"), then wait ~30s before retrying. If it persists the API path in Setup › Uppbeat has likely changed.';
   return 'Uppbeat returned HTTP ' + status + ' for the ' + what + ' request.';
 }
 
@@ -642,6 +657,23 @@ export const Uppbeat = {
     return Uppbeat.me().catch(function () { return session; });
   },
 
+  /** Manual plan override — for when Uppbeat won't report the account level
+      (e.g. /me is blocked) but you know it's paid. Passing a plan name like
+      'creator' unlocks premium; 'auto'/'redetect' re-runs detection instead
+      (used when you untick the override). */
+  setPlan: function (plan) {
+    const name = String(plan == null ? '' : plan).trim().toLowerCase();
+    if (name === 'auto' || name === 'redetect' || name === 'auto-redetect') {
+      session.plan = 'free';
+      Uppbeat.saveSession();
+      return Uppbeat.me().catch(function () { return session; });
+    }
+    session.plan = name || 'free';
+    session.signedIn = true;
+    Uppbeat.saveSession();
+    return session;
+  },
+
   /** Turn any pasted form into a single `k=v; k2=v2` Cookie header. */
   parseManualCookies: function (raw) {
     const text = String(raw == null ? '' : raw).trim();
@@ -698,9 +730,14 @@ export const Uppbeat = {
 
   /* --- API ---------------------------------------------------------------- */
 
-  json: function (path, what) {
+  json: function (path, what, _attempt) {
+    _attempt = _attempt || 0;
     const url = path.indexOf('http') === 0 ? path : BASE + path;
     return httpGet(url).then(function (res) {
+      if (res.status === 429 && _attempt < 2) {
+        return new Promise(function (resolve) { setTimeout(resolve, 3000 * (_attempt + 1)); })
+          .then(function () { return Uppbeat.json(path, what, _attempt + 1); });
+      }
       if (res.status !== 200) throw new Error(explainStatus(res.status, what || 'API'));
       let json;
       try { json = JSON.parse(res.body); }
