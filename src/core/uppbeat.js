@@ -48,6 +48,34 @@ export const DEFAULT_ENDPOINTS = {
   download: '/api/v1/tracks/{id}/download'
 };
 
+/* Browsers yt-dlp can copy cookies from. Chrome and Edge (v127+) encrypt their
+   cookie stores with App-Bound Encryption that yt-dlp cannot decrypt while the
+   browser is running — Firefox keeps working, so it is the one the flow will
+   prefer when the configured browser fails. */
+export const SUPPORTED_BROWSERS = ['firefox', 'chrome', 'edge', 'brave', 'opera', 'vivaldi', 'chromium'];
+
+/** Best-effort check that a browser's profile directory exists. */
+function browserInstalled(b) {
+  let home = null;
+  try { home = CEP.os.homedir(); } catch (e) { return false; }
+  const L = home + '\\AppData\\Local';
+  const R = home + '\\AppData\\Roaming';
+  const profiles = {
+    firefox: [R + '\\Mozilla\\Firefox\\Profiles'],
+    chrome: [L + '\\Google\\Chrome\\User Data'],
+    edge: [L + '\\Microsoft\\Edge\\User Data'],
+    brave: [L + '\\BraveSoftware\\Brave-Browser\\User Data'],
+    opera: [R + '\\Opera Software\\Opera Stable'],
+    vivaldi: [L + '\\Vivaldi\\User Data'],
+    chromium: [L + '\\Chromium\\User Data']
+  };
+  const list = profiles[b] || [];
+  for (let i = 0; i < list.length; i++) {
+    if (Paths.exists(list[i])) return true;
+  }
+  return false;
+}
+
 /* --- session ------------------------------------------------------------- */
 
 let session = { cookies: '', account: null, plan: 'free', signedIn: false, importedAt: null };
@@ -251,6 +279,8 @@ function extractTracks(json) {
 export const Uppbeat = {
   BASE: BASE,
   DEFAULT_ENDPOINTS: DEFAULT_ENDPOINTS,
+  SUPPORTED_BROWSERS: SUPPORTED_BROWSERS,
+  browserInstalled: browserInstalled,
 
   /* --- session ----------------------------------------------------------- */
 
@@ -298,41 +328,63 @@ export const Uppbeat = {
    * session until the cookies appear. MediaRade never sees the password —
    * the browser does the authenticating, we only pick up the result.
    *
-   * @param {function} onTick  (attempt, max) progress callback
+   * Tries the configured browser first, then every other installed browser,
+   * because Chrome/Edge v127+ hide their cookies behind App-Bound Encryption
+   * that yt-dlp cannot decrypt while they are running. The failure reason is
+   * surfaced to the UI (onTick's third argument) so the user is told what is
+   * actually going on instead of waiting for a silent timeout.
+   *
+   * @param {function} onTick  (attempt, max, {message, browser}) progress callback
    * @returns {Promise<object>} the live session; rejects if it never arrives
    */
   signIn: function (onTick) {
-    const browser = Config.get('uppbeatBrowser') || 'chrome';
+    const configured = Config.get('uppbeatBrowser') || 'chrome';
+    const candidates = [configured].concat(SUPPORTED_BROWSERS.filter(function (b) {
+      return b !== configured && Uppbeat.browserInstalled(b);
+    }));
     const max = Config.get('uppbeatSignInTries') || 40;      // ~3.5 minutes
     const gap = 5000;                                         // 5s between cookie-copy attempts
 
     Uppbeat.openSignIn();
 
     let cancelled = false;
+    let lastError = '';
 
     const run = new Promise(function (resolve, reject) {
       let attempt = 0;
 
       function tick() {
-        if (cancelled) return reject(Object.assign(new Error('cancelled'), { cancelled: true }));
+        if (cancelled) return reject(Object.assign(new Error('cancelled'), { canceled: true, cancelled: true }));
         attempt++;
-        if (onTick) { try { onTick(attempt, max); } catch (e) {} }
+        if (onTick) { try { onTick(attempt, max, lastError ? { message: lastError, browser: null } : null); } catch (e) {} }
 
-        Uppbeat.importSession(browser).then(function (s) {
+        let i = 0;
+        function tryNext() {
           if (cancelled) return;
-          if (s && s.signedIn && s.cookies) return resolve(s);
-          retry();
-        }).catch(function () {
-          retry();
-        });
+          const b = candidates[i++];
+          if (!b) return retry();
+
+          Uppbeat.importSession(b).then(function (s) {
+            if (cancelled) return;
+            if (s && s.signedIn && s.cookies) return resolve(Object.assign({}, s, { browser: b }));
+            retry();
+          }).catch(function (e) {
+            lastError = e && e.message ? e.message : String(e);
+            if (onTick) { try { onTick(attempt, max, { message: lastError, browser: b }); } catch (e2) {} }
+            tryNext();
+          });
+        }
+        tryNext();
       }
 
       function retry() {
         if (cancelled) return;
         if (attempt >= max) {
           return reject(new Error(
-            'Timed out waiting for the ' + browser + ' session. Sign in at uppbeat.io in ' + browser +
-            ', then press Sign in again. If ' + browser + ' is not the browser you use, change it in Setup › Uppbeat.'));
+            'Timed out waiting for an Uppbeat session. Sign in at uppbeat.io, then wait a few seconds.' +
+            (lastError ? '\n\nLast error: ' + lastError : '') +
+            '\n\nIf you use Chrome or Edge, close them completely so the session can be read — ' +
+            'or pick Firefox in Setup › Uppbeat.'));
         }
         setTimeout(tick, gap);
       }
@@ -355,6 +407,10 @@ export const Uppbeat = {
    * Import the uppbeat.io session from a browser you are already signed in to.
    * yt-dlp does the cookie decryption (it already ships with MediaRade), then we
    * keep only uppbeat.io cookies — nothing from any other site is retained.
+   *
+   * The URL is deliberately `unsupported:` so yt-dlp only copies the cookie jar
+   * and never fetches uppbeat.io — the poll loop would otherwise hammer the
+   * site (40 requests in ~3.5 minutes) and trip its rate limiter.
    */
   importSession: function (browser) {
     browser = browser || Config.get('uppbeatBrowser') || Config.get('cookiesFromBrowser') || 'chrome';
@@ -367,14 +423,22 @@ export const Uppbeat = {
 
     const args = ['--cookies-from-browser', browser, '--cookies', jar,
                   '--skip-download', '--ignore-errors', '--no-warnings', '--ignore-config',
-                  BASE + '/'];
+                  'unsupported:uppbeat-cookies-only'];
 
     return Proc.run(YtDlp.ytdlp, args, { timeout: 90000 }).then(function (r) {
+      const stderr = r.stderr || '';
       if (!Paths.exists(jar)) {
-        const hint = /could not (find|copy)|permission|locked|DPAPI/i.test(r.stderr || '')
+        const abe = /DPAPI|app.?bound|10927|could not decrypt/i.test(stderr) ? ' ' +
+            (browser === 'chrome' || browser === 'edge'
+              ? browser[0].toUpperCase() + browser.slice(1) + ' v127+ protects its cookies with App-Bound ' +
+                'Encryption, which yt-dlp cannot decrypt while it is running. Close ' + browser + ' completely, ' +
+                'or use Firefox instead (Setup › Uppbeat › Sign in with this browser).'
+              : browser + ' refused to give up its cookies.')
+          : '';
+        const hint = /could not (find|copy)|permission|locked|DPAPI/i.test(stderr)
           ? ' Close ' + browser + ' completely and try again — Windows locks the cookie database while it is running.'
           : '';
-        throw new Error('Could not read cookies from ' + browser + '.' + hint);
+        throw new Error('Could not read cookies from ' + browser + '.' + (abe || hint));
       }
 
       const cookies = Uppbeat.parseJar(Paths.read(jar, ''));

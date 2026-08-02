@@ -73,8 +73,10 @@ export function UppbeatView() {
     setError(null);
     setSigningIn({ attempt: 0, max: Config.get('uppbeatSignInTries') || 40 });
 
-    signInJob = Uppbeat.signIn(function (attempt, max) {
-      setSigningIn({ attempt: attempt, max: max });
+    signInJob = Uppbeat.signIn(function (attempt, max, info) {
+      setSigningIn({ attempt: attempt, max: max,
+                     error: (info && info.message) || null,
+                     browser: (info && info.browser) || null });
     });
 
     signInJob.then(function (s) {
@@ -82,7 +84,8 @@ export function UppbeatView() {
       setSigningIn(null);
       syncSession();
       const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
-      Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free'));
+      Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
+        (s.browser ? ' (via ' + s.browser + ')' : ''));
       if (input && input.value.trim()) doSearch();
     }).catch(function (e) {
       signInJob = null;
@@ -334,10 +337,14 @@ function signOut() {
           <div class="mr-claimwarn" style={{ 'margin-bottom': '6px' }}>
             <span>⏳</span>
             <span>
-              {'Waiting for you to sign in at uppbeat.io in ' + (Config.get('uppbeatBrowser') || 'chrome') +
-               '. MediaRade is checking for the session every few seconds (' +
-               signingIn().attempt + '/' + signingIn().max + ') and will pick it up automatically. ' +
-               'If nothing happens, make sure that is the browser you signed in with — you can change it in Setup.'}
+              {'Waiting for you to sign in at uppbeat.io. MediaRade is checking for the session every few seconds (' +
+               signingIn().attempt + '/' + signingIn().max + ') and will pick it up automatically.'}
+              <Show when={signingIn().error}>
+                <div style={{ 'margin-top': '6px' }}>
+                  <b>{signingIn().browser ? 'Tried ' + signingIn().browser + ': ' : 'Last attempt: '}</b>
+                  {signingIn().error}
+                </div>
+              </Show>
             </span>
           </div>
         </Show>

@@ -529,9 +529,9 @@ function UppbeatPanel() {
       <Toggle key="uppbeatEnabled" label="Show the Uppbeat tab" />
 
       <Row label="Sign in with this browser"
-        hint={'Whichever browser you use for uppbeat.io. <b>Sign in</b> opens it there, then MediaRade watches for ' +
-              'the session and imports it on its own. If the import keeps failing, close that browser first — ' +
-              'Windows locks the cookie database while it is running.'}>
+        hint={'Which browser holds your uppbeat.io session. <b>Sign in</b> opens the site there and MediaRade watches ' +
+              'for the session. Chrome and Edge v127+ encrypt their cookies (App-Bound Encryption) and only release ' +
+              'them when fully closed — Firefox is read while open, so it is the smoothest choice.'}>
         <Select options={['chrome', 'edge', 'firefox', 'brave', 'opera', 'vivaldi', 'chromium']}
           value={browser()} onChange={(v) => Config.set('uppbeatBrowser', v)} />
       </Row>
