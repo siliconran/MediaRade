@@ -75,11 +75,15 @@ export const DnD = {
       try { dt.effectAllowed = 'copy'; } catch (err) { /* some hosts refuse this */ }
 
       // Each format is set independently so one unsupported type can never
-      // abort the whole drag. Premiere's timeline accepts com.adobe.cep.dnd.file
-      // (the CEP native file-drag property — without it the timeline shows the
-      // "not allowed" cursor); the rest cover Explorer and other drop targets.
+      // abort the whole drag. `application/x-cef-dnd-file` is the property Adobe
+      // CEF itself hands to its host, so Premiere accepts a real file drag on
+      // its timeline and project panel — without it Premiere shows the "not
+      // allowed" cursor. `com.adobe.cep.dnd.file` is kept as a fallback for some
+      // host embeddings, and the plain formats cover Explorer and other apps.
       const formats = [
-        function () { dt.setData('com.adobe.cep.dnd.file.0', path); },
+        function () { dt.setData('application/x-cef-dnd-file', path); },
+        function () { dt.setData('com.adobe.cep.dnd.file', path); },
+        function () { dt.setData('com.adobe.cef.dnd-file', path); },
         function () { dt.setData('text/uri-list', url + '\r\n'); },
         function () { dt.setData('text/plain', path); },
         function () { dt.setData('Files', path); },
