@@ -37,6 +37,7 @@ function section(t) { console.log('\n' + t); }
 function makeShims(win) {
   const FILES = {};
   const DIRS = { 'C:\\Users\\dev\\Documents': true };
+  const SPAWNED = [];
   const norm = (p) => String(p).replace(/\//g, '\\');
 
   const path = {
@@ -83,6 +84,7 @@ function makeShims(win) {
   function fakeChild(args) {
     const h = {};
     const argv = args || [];
+    SPAWNED.push(argv);
     const fIdx = argv.indexOf('-f');
     const sel = fIdx > -1 ? argv[fIdx + 1] : '';
     const strictPrimary = sel.indexOf('vcodec^=avc1') > -1;
@@ -141,7 +143,7 @@ function makeShims(win) {
     addEventListener() {}, removeEventListener() {}, invokeSync: () => '', resizeContent() {}
   };
 
-  return { FILES, DIRS };
+  return { FILES, DIRS, SPAWNED };
 }
 
 /* --- boot ------------------------------------------------------------------ */
@@ -381,6 +383,17 @@ check('cookie jar keeps only uppbeat.io', UB.parseJar(
   '.youtube.com\tTRUE\t/\tTRUE\t0\tLEAK\tNOPE\n'), 'session=XYZ');
 check('filename split for assisted ingest', UB.guessFromFilename('Pecan Pie - Golden Hour.mp3'),
   { artist: 'Pecan Pie', title: 'Golden Hour' });
+check('browser fallback list is exposed', Array.isArray(UB.SUPPORTED_BROWSERS) &&
+  UB.SUPPORTED_BROWSERS.includes('firefox') && typeof UB.browserInstalled === 'function', true);
+{
+  const before = shims.SPAWNED.length;
+  await UB.importSession('firefox').catch(function () {});
+  const args = shims.SPAWNED.slice(before).find(function (a) { return a.indexOf('--cookies-from-browser') > -1; }) || [];
+  check('cookie import asks for the right browser',
+    args[args.indexOf('--cookies-from-browser') + 1] === 'firefox', true);
+  check('cookie import never fetches uppbeat.io (offline URL)',
+    args.indexOf('unsupported:uppbeat-cookies-only') > -1 && args.indexOf('https://uppbeat.io/') === -1, true);
+}
 
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',
