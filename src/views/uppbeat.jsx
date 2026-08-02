@@ -85,20 +85,14 @@ export function UppbeatView() {
 
     const importBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
       text: "I've signed in — Import session" });
-    const manualText = U.el('textarea', {
-      class: 'ps2-input', rows: 3,
-      placeholder: 'e.g.  session=Abc123…  — or paste the whole Cookie header from DevTools',
-      style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' }
-    });
-    const manualBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
-      text: 'Use this session', style: { marginTop: '6px' } });
-
-    function finish(s) {
+    const withSession = function (s) {
+      Modal.close();
+      syncSession();
       const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
       Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
         (s.browser ? ' (via ' + s.browser + ')' : ''));
       if (input && input.value.trim()) doSearch();
-    }
+    };
 
     importBtn.addEventListener('click', function () {
       importBtn.disabled = true;
@@ -106,32 +100,53 @@ export function UppbeatView() {
       Uppbeat.importNow().then(function (s) {
         importBtn.disabled = false;
         setStatus('Session imported.', 'ok');
-        Modal.close();
-        syncSession();
-        finish(s);
+        withSession(s);
       }).catch(function (e) {
         importBtn.disabled = false;
         setStatus('Could not read your browser cookies: ' + e.message, 'err');
       });
     });
 
+    /* Dedicated field for the one cookie that carries the login. */
+    const tokenIn = U.el('input', { class: 'ps2-input', type: 'text',
+      placeholder: 'the auth_token value',
+      style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
+    const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
+      text: 'Use auth_token', title: 'For when the browser import can\'t read cookies — paste just the auth_token value from Cookie Editor or DevTools',
+      style: { marginTop: '6px' } });
+    tokenBtn.addEventListener('click', function () {
+      try {
+        Uppbeat.setAuthToken(tokenIn.value).then(withSession);
+      } catch (e) {
+        setStatus('Could not use that auth_token: ' + e.message, 'err');
+      }
+    });
+
+    const manualText = U.el('textarea', {
+      class: 'ps2-input', rows: 3,
+      placeholder: 'or paste the whole Cookie header / Cookie-Editor export here',
+      style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' }
+    });
+    const manualBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
+      text: 'Use this Cookie header', style: { marginTop: '6px' } });
+
     manualBtn.addEventListener('click', function () {
       try {
-        Uppbeat.setCookiesManually(manualText.value).then(function (s) {
-          Modal.close();
-          syncSession();
-          finish(s);
-        });
+        Uppbeat.setCookiesManually(manualText.value).then(withSession);
       } catch (e) {
         setStatus('That cookie was not accepted: ' + e.message, 'err');
       }
     });
 
+    /* Pull out a real browser window (the system default) so signing in is one
+       jump away, and the session can be imported straight after. */
+    Uppbeat.openSignIn();
+
     Modal.open({
       title: 'Sign in to Uppbeat',
       body: U.el('div', { class: 'ps2-col-gap' }, [
         U.el('div', { class: 'ps2-caption', html:
-          '<b>1.</b> Sign in at uppbeat.io — MediaRade never sees your password. ' +
+          '<b>1.</b> A browser window has opened — sign in at uppbeat.io there. MediaRade never sees your password. ' +
           'Then return here and click <b>Import session</b>.' }),
         U.el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, [
           U.el('div', { class: 'mr-attrib', style: { margin: '6px 0', userSelect: 'text', flex: '1 1 auto', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis' }, text: loginUrl }),
@@ -144,12 +159,17 @@ export function UppbeatView() {
         status,
         U.el('hr', { class: 'ps2-hr' }),
         U.el('div', { class: 'ps2-caption', html:
-          '<b>Stuck?</b> Chrome and Edge (v127+) refuse to share cookies while they are running, ' +
-          'and portable browsers like r3dfox need their profile folder set in <b>Setup › Uppbeat</b>. ' +
-          'Any browser works with the manual route: press <b>F12 → Application → Cookies → uppbeat.io</b>, ' +
-          'copy the session cookie as <code>name=value</code>, paste it below.' }),
-        manualText,
-        U.el('div', {}, [ manualBtn ])
+          '<b>Stuck?</b> Chrome and Edge (v127+) lock their cookies while running, and portable browsers like ' +
+          'r3dfox need their profile folder set in <b>Setup › Uppbeat</b>. Then either:' }),
+        U.el('div', { class: 'ps2-col-gap', style: { marginTop: '6px' } }, [
+          tokenIn,
+          U.el('div', {}, [ tokenBtn ]),
+          U.el('div', { class: 'ps2-caption', html:
+            'In Cookie Editor (or DevTools → Application → Cookies → <code>uppbeat.io</code>), find <b>auth_token</b>, copy its <b>value</b> into the box above — that single cookie is the whole login.' }),
+          U.el('hr', { class: 'ps2-hr' }),
+          manualText,
+          U.el('div', {}, [ manualBtn ])
+        ])
       ]),
       buttons: [{ label: 'Close', run: function () { Modal.close(); } }]
     });

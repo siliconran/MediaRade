@@ -352,6 +352,32 @@ function extractTracks(json) {
   return [];
 }
 
+/* Words that are account states, not plan names — a bare `true` or `active`
+   flag does not tell us the plan, so fall through to the premium boolean. */
+const NON_PLANS = ['', 'none', 'active', 'inactive', 'true', 'false', 'paid', 'standard', 'default'];
+
+function truthy(v) { return v === true || v === 1 || v === 'true' || v === '1' || v === 'yes'; }
+
+/** Coerce whatever Uppbeat reports for the account into a plan string that
+    `isPremium()` understands ('free' | 'none' | any real-paid-plan name). */
+function readPlan(acct) {
+  if (!acct || typeof acct !== 'object') return 'free';
+  const premiumFlag = pick(acct, ['premium', 'isPremium', 'is_premium', 'isPro', 'is_pro',
+    'plan.premium', 'subscription.premium', 'subscription.active', 'hasPaidSubscription', 'isPaid', 'pro']);
+  const planName = pick(acct, ['plan.name', 'plan.title', 'plan.key', 'plan.label',
+    'subscription.plan.name', 'subscription.name', 'tier.name', 'membership.name', 'license.plan.name']);
+  const planRaw = pick(acct, ['plan', 'subscription', 'tier', 'membership', 'accountStatus', 'planType']);
+
+  let plan = '';
+  const rawName = planRaw && typeof planRaw === 'object' ? (planRaw.name || planRaw.key || planRaw.title || '') : planRaw;
+  if (typeof planName === 'string' && planName) plan = String(planName);
+  else if (typeof rawName === 'string' && rawName) plan = String(rawName);
+
+  plan = plan.trim().toLowerCase();
+  if (plan && NON_PLANS.indexOf(plan) === -1) return plan;
+  return truthy(premiumFlag) ? 'premium' : 'free';
+}
+
 /* ========================================================================= */
 
 export const Uppbeat = {
@@ -591,15 +617,83 @@ export const Uppbeat = {
     return out.join('; ');
   },
 
-  /** Paste-a-cookie-string escape hatch when browser import is not possible. */
+  /** Paste-cookie escape hatch when browser import is impossible. Accepts a
+      raw `Cookie:` header, a `k=v; k2=v2` / newline-separated string, or a
+      Cookie-Editor JSON export (array of {name,value,…} objects). */
   setCookiesManually: function (raw) {
-    const clean = String(raw || '').trim().replace(/^Cookie:\s*/i, '');
-    if (!clean) throw new Error('Nothing to set.');
-    session.cookies = clean;
+    const cookies = Uppbeat.parseManualCookies(raw);
+    if (!cookies) throw new Error('Nothing to set — paste the Cookie header or its name=value entries, not plain text.');
+    session.cookies = cookies;
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
     return Uppbeat.me().catch(function () { return session; });
+  },
+
+  /** The one cookie that carries the login: give Uppbeat's `auth_token` value
+      directly (copy it from Cookie Editor / DevTools) and skip the rest. */
+  setAuthToken: function (token) {
+    const raw = String(token == null ? '' : token).trim();
+    if (!raw) throw new Error('Paste the auth_token value first.');
+    session.cookies = 'auth_token=' + raw;
+    session.signedIn = true;
+    session.importedAt = Date.now();
+    Uppbeat.saveSession();
+    return Uppbeat.me().catch(function () { return session; });
+  },
+
+  /** Turn any pasted form into a single `k=v; k2=v2` Cookie header. */
+  parseManualCookies: function (raw) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return '';
+    const entries = [];
+
+    function push(k, v) {
+      k = String(k == null ? '' : k).trim();
+      v = String(v == null ? '' : v).trim();
+      if (!k) return;
+      entries.push(k + '=' + v);
+    }
+
+    function fromPair(s) {
+      s = String(s == null ? '' : s).trim().replace(/^['"]+|['"]+$/g, '');
+      const eq = s.indexOf('=');
+      if (eq < 1) return;
+      push(s.slice(0, eq), s.slice(eq + 1));
+    }
+
+    function fromObject(o) {
+      if (!o || typeof o !== 'object') return;
+      if ('name' in o && 'value' in o) { push(o.name, o.value); return; }   // single cookie object
+      const arr = Array.isArray(o) ? o : (Array.isArray(o.cookies) ? o.cookies : null);
+      if (arr) {
+        arr.forEach(function (c) {
+          if (c && typeof c === 'object') {
+            if ('name' in c) push(c.name, c.value);
+            else Object.keys(c).forEach(function (k) { fromPair(k + ':' + JSON.stringify(c[k]).replace(/"/g, '')); });
+          } else if (typeof c === 'string') { fromPair(c); }
+        });
+        return;
+      }
+      if (typeof o.cookies === 'string') { o.cookies.split(/[;\r\n]+/).forEach(fromPair); return; }
+      Object.keys(o).forEach(function (k) {
+        const v = o[k];
+        if (v && typeof v === 'object') fromObject(v); else push(k, v);
+      });
+    }
+
+    const first = text.charAt(0);
+    if (first === '[' || first === '{') {
+      let j = null;
+      try { j = JSON.parse(text); } catch (e) { j = null; }
+      if (j !== null) {
+        fromObject(j);
+        return entries.length ? entries.join('; ') : '';
+      }
+    }
+
+    text.replace(/^Cookie:\s*/i, '').split(/[;\r\n]+/).forEach(fromPair);
+    return entries.length ? entries.join('; ') : '';
   },
 
   /* --- API ---------------------------------------------------------------- */
@@ -626,9 +720,7 @@ export const Uppbeat = {
         email: pick(acct, ['email', 'user.email']),
         name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
       };
-      const plan = pick(acct, ['plan.name', 'plan', 'subscription.plan', 'subscription.name',
-                               'tier', 'membership', 'subscriptionStatus']);
-      session.plan = plan ? String(plan).toLowerCase() : 'free';
+      session.plan = readPlan(acct) || 'free';
       session.signedIn = true;
       Uppbeat.saveSession();
       return session;
