@@ -383,8 +383,9 @@ check('cookie jar keeps only uppbeat.io', UB.parseJar(
   '.youtube.com\tTRUE\t/\tTRUE\t0\tLEAK\tNOPE\n'), 'session=XYZ');
 check('filename split for assisted ingest', UB.guessFromFilename('Pecan Pie - Golden Hour.mp3'),
   { artist: 'Pecan Pie', title: 'Golden Hour' });
-check('browser fallback list is exposed', Array.isArray(UB.SUPPORTED_BROWSERS) &&
-  UB.SUPPORTED_BROWSERS.includes('firefox') && typeof UB.browserInstalled === 'function', true);
+check('browser fallback list is exposed', Array.isArray(UB.BROWSERS) &&
+  UB.BROWSERS.some(function (b) { return b.id === 'firefox'; }) &&
+  typeof UB.browserInstalled === 'function' && typeof UB.cookiesArg === 'function', true);
 {
   const before = shims.SPAWNED.length;
   await UB.importSession('firefox').catch(function () {});

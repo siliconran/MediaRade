@@ -531,10 +531,19 @@ function UppbeatPanel() {
       <Row label="Sign in with this browser"
         hint={'Which browser holds your uppbeat.io session. <b>Sign in</b> opens the site there and MediaRade watches ' +
               'for the session. Chrome and Edge v127+ encrypt their cookies (App-Bound Encryption) and only release ' +
-              'them when fully closed — Firefox is read while open, so it is the smoothest choice.'}>
-        <Select options={['chrome', 'edge', 'firefox', 'brave', 'opera', 'vivaldi', 'chromium']}
+              'them when fully closed — a Firefox-family browser (Firefox, r3dfox, LibreWolf, Waterfox) is read ' +
+              'while open, so it is the smoothest choice.'}>
+        <Select options={Uppbeat.BROWSERS.map((b) => ({ value: b.id, label: b.label }))}
           value={browser()} onChange={(v) => Config.set('uppbeatBrowser', v)} />
       </Row>
+
+      <Show when={(Uppbeat.BROWSERS.find((b) => b.id === browser()) || {}).family === 'fox'}>
+        <Row label="Custom profile folder (optional)"
+          hint="Only needed for portable / homebrew Firefox builds that keep their profile away from the normal location. \
+                Leave blank to auto-detect. The chosen folder should be the one containing <code>profiles.ini</code>.">
+          <TextInput key="uppbeatProfilePath" placeholder="e.g. D:\\r3dfox\\Profiles" />
+        </Row>
+      </Show>
 
       <div class="ps2-row-gap ps2-wrap" style={{ marginBottom: '10px' }}>
         <Btn size="sm" variant="primary" label="Sign in"

@@ -61,14 +61,15 @@ export function LogView() {
   });
 
   return (
-    <div class="mr-view__body" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div class="mr-view__toolbar">
-        <span class="mr-filters__label" style={{ alignSelf: 'center' }}>Log</span>
-        <span class="ps2-caption ps2-mono" style={{ alignSelf: 'center' }}>{Paths.file('log')}</span>
+    <div class="mr-view__body mr-logview"
+      style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <div class="mr-view__toolbar mr-logview__toolbar">
+        <span class="mr-filters__label">Log</span>
+        <span class="ps2-caption ps2-mono mr-logview__path" title={Paths.file('log')}>{Paths.file('log')}</span>
         <span class="ps2-panel__spacer" />
-        <span class="ps2-caption" style={{ alignSelf: 'center' }}>{stamp() ? 'updated ' + stamp() : ''}</span>
+        <span class="ps2-caption" style={{ whiteSpace: 'nowrap' }}>{stamp() ? 'updated ' + stamp() : ''}</span>
         <input class="ps2-input" type="text" placeholder="Filter…"
-          style={{ width: '140px', padding: '4px 8px' }}
+          style={{ width: '150px', flex: '0 0 auto', padding: '4px 8px' }}
           onInput={(e) => setText(e.currentTarget.value)} />
         <Chip label="Auto-scroll" on={autoScroll()} onChange={(on) => setAutoScroll(on)} />
         <button class="ps2-btn ps2-btn--sm" onClick={() => refresh(true)}>Refresh</button>
@@ -83,10 +84,11 @@ export function LogView() {
           <div class="ps2-caption" style={{ padding: '10px 0', color: 'var(--ps2-warn)' }}>{error()}</div>
         </Show>
         <pre ref={pre} class="mr-attrib mr-log"
-          style={{ margin: 0, flex: 1, minHeight: 0, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+          style={{ margin: 0, flex: 1, minHeight: 0, overflow: 'auto', whiteSpace: 'pre-wrap',
+                   overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           {visible().join('\n') || (text() ? '— no lines match "' + text() + '" —' : '— nothing yet —')}
         </pre>
-        <div class="ps2-caption" style={{ padding: '6px 0 2px', textAlign: 'center' }}>
+        <div class="ps2-caption" style={{ padding: '6px 0 2px', textAlign: 'center', flex: 'none' }}>
           {visible().length + ' line' + (visible().length === 1 ? '' : 's') + ' · last ' + MAX_LINES + ' shown'}
         </div>
       </div>
