@@ -328,7 +328,9 @@ function normalizeTrack(t) {
     moods: [].concat(pick(t, ['moods', 'mood']) || []).map(function (m) {
       return typeof m === 'string' ? m : (m && (m.name || m.title)) || '';
     }).filter(Boolean),
-    premium: !!(pick(t, ['isPremium', 'premium', 'requiresSubscription'])),
+    premium: !!(pick(t, ['isPremium', 'premium', 'requiresSubscription', 'is_premium',
+                         'premiumTrack', 'premiumTier', 'license.isPremium'])) &&
+      !pick(t, ['isFree', 'free', 'freeTrack', 'is_free']),
     preview: pick(t, ['previewUrl', 'preview', 'audioUrl', 'mp3', 'streamUrl', 'file.preview']),
     artwork: pick(t, ['artwork', 'image', 'imageUrl', 'artist.image', 'cover']),
     page: slug ? (String(slug).indexOf('http') === 0 ? String(slug) : BASE + '/track/' + slug) : BASE,

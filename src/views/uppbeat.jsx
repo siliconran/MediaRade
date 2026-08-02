@@ -15,7 +15,7 @@ import DnD from '../ui/dragdrop.js';
 import Place from '../ui/place.js';
 import Modal from '../ui/modal.js';
 import Toast from '../ui/toast.js';
-import { Badge, Btn, Empty, Progress } from '../ui/components.jsx';
+import { Badge, Btn, Chip, Empty, Progress } from '../ui/components.jsx';
 
 const GENRE_PRESETS = [
   'cinematic', 'lofi', 'ambient', 'corporate', 'hip hop', 'rock',
@@ -32,6 +32,7 @@ export function UppbeatView() {
   const [progress, setProgress] = createSignal(0);
   const [playing, setPlaying] = createSignal(null);
   const [signingIn, setSigningIn] = createSignal(null);   // { attempt, max } while polling
+  const [freeOnly, setFreeOnly] = createSignal(false);    // hide premium tracks from results
 
   let input, audioEl;
 
@@ -57,6 +58,13 @@ export function UppbeatView() {
   const premium = createMemo(function () {
     const p = String(plan() || 'free').toLowerCase();
     return signedIn() && p !== 'free' && p !== 'none';
+  });
+
+  /** Results after the Free-only filter. */
+  const shown = createMemo(function () {
+    const list = results();
+    if (!freeOnly()) return list;
+    return list.filter(function (t) { return !t.premium; });
   });
 
   /* --- session ------------------------------------------------------------ */
@@ -325,6 +333,9 @@ function signOut() {
           </div>
 
           <div class="mr-filters__group">
+            <Chip label="Free only"
+              title="Show only tracks covered by the free plan (hide premium tracks)"
+              on={freeOnly()} onChange={(on) => setFreeOnly(on)} />
             <Btn size="sm" variant="ghost" label="Open uppbeat.io"
               onClick={() => Uppbeat.openSite('/browse/music')} />
             <Btn size="sm" variant="ghost" label="Ingest a file"
@@ -411,8 +422,14 @@ function signOut() {
         </Show>
 
         <Show when={results().length > 0}>
+          <Show when={freeOnly() && results().some((t) => t.premium)}>
+            <div class="ps2-caption" style={{ padding: '0 2px 8px', color: 'var(--ps2-text-tertiary)' }}>
+              Hiding {results().filter((t) => t.premium).length} premium track{results().filter((t) => t.premium).length === 1 ? '' : 's'} —
+              turn off “Free only” to see them.
+            </div>
+          </Show>
           <div class="mr-results">
-            <For each={results()}>
+            <For each={shown()}>
               {(t) => (
                 <TrackCard
                   t={t}
@@ -475,8 +492,16 @@ function TrackCard(props) {
         </div>
 
         <div class="mr-card__tags">
-          <Badge text={props.premium ? 'covered by your plan' : 'credit required'} kind={props.premium ? 'ok' : 'warn'} />
-          {t().premium && !props.premium ? <Badge text="premium track" kind="crit" /> : null}
+          <Badge text={t().premium ? 'PREMIUM' : 'FREE'}
+            kind={t().premium ? (props.premium ? 'ok' : 'crit') : 'ok'}
+            title={t().premium
+              ? 'Premium track — covered only on a paid Uppbeat plan'
+              : 'Free track — covered by every plan'} />
+          {props.premium
+            ? null
+            : (t().premium
+              ? <Badge text="not on free plan" kind="crit" title="Needs a paid Uppbeat plan to download" />
+              : <Badge text="credit required" kind="warn" title="Free downloads must credit the artist" />)}
           {local() ? <Badge text="downloaded" kind="ok" /> : null}
         </div>
 
