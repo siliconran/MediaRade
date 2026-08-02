@@ -119,6 +119,35 @@ const DERIVATIVE_PATTERNS = [
    'Covers need a mechanical licence from the composition owner that the uploader may or may not hold.']
 ];
 
+/* Phase 2 trap #3: an obvious commercial music release. Official artist/label
+   channels and the "Artist — Song (Official Audio)" title shape publish
+   recordings nobody except the rightsholder may sublicense. */
+const COMMERCIAL_MUSIC_PATTERNS = [
+  [/\bvevo\b/i, 'music.vevo', 'VEVO channel',
+   'VEVO publishes official label-owned music videos. The recording is commercial and Content ID registered.'],
+  [/-\s*topic\b/i, 'music.topic', 'YouTube "Topic" auto-channel',
+   'Auto-generated official audio channels are published by the label or distributor. The track is registered with Content ID.'],
+  [/\b(univer[cs]al (music|records?)|sony (music|entertainment)|warner (music|records?|chappell)|republic records?|interscope records?|columbia records?|rca records?|epic records?|capitol records?|island records?|def jam|atlantic records?|elektra records?|motown records?|mercury records?)\b/i,
+   'music.label', 'Major record label channel',
+   'Major-label channels publish commercial recordings. The master is owned by the label, not the uploader.']
+];
+
+/* Phase 2 trap #3b: the "(Official Audio / Music Video / Lyric Video)" title
+   shape. Only treated as a music release when the title has the "Artist -
+   Song" shape, which is the near-universal form for released commercial tracks. */
+const MUSIC_TITLE_PATTERNS = [
+  [/\((official\s+)?audio\)/i, 'music.release.audio', 'Official audio upload',
+   'A released commercial recording, published by the rightsholder or a fan reupload. The audio is registered with Content ID.'],
+  [/\((official\s+)?album version\)/i, 'music.release.album', 'Released album track',
+   'A released album recording. The master is owned by the label.'],
+  [/\((official\s+)?lyric[s]?\s*video\)/i, 'music.release.lyrics', 'Lyric video for a commercial track',
+   'A lyric video of a released commercial recording.'],
+  [/\((official\s+)?music\s*video\)/i, 'music.release.musicvideo', 'Official music video',
+   'An official music video for a commercial release; the label owns the master and the visuals.'],
+  [/\((official\s+)?visualizer\)/i, 'music.release.visualizer', 'Official visualizer',
+   'An official visualizer for a released commercial track.']
+];
+
 const RESERVATION_PATTERNS = [
   [/all rights reserved/i,                        'reserve.arr',        'Text reserves all rights'],
   [/©|\(c\)\s*(19|20)\d{2}|copyright\s*(19|20)\d{2}/i, 'reserve.notice', 'Carries a copyright notice'],
@@ -301,6 +330,8 @@ export const License = {
     const thirdParty   = scan(description, THIRD_PARTY_PATTERNS);
     const reupload     = scan(haystack, REUPLOAD_PATTERNS);
     const aggregator   = scan(channel, AGGREGATOR_PATTERNS);
+    const commercialMusic = scan(channel, COMMERCIAL_MUSIC_PATTERNS).concat(
+      /\S+\s+-\s+\S/.test(title) ? scan(title, MUSIC_TITLE_PATTERNS) : []);
 
     /* Content ID fingerprint — automated tracking blocks YouTube has set. */
     const contentIdFields = [];
@@ -371,6 +402,11 @@ export const License = {
     /* ---- 5. derivative flags -------------------------------------------- */
     derivatives.forEach(function (d) {
       signals.push(sig('crit', d.id, d.label, d.detail, d.evidence));
+    });
+
+    /* ---- 5b. obvious commercial music ------------------------------------ */
+    commercialMusic.forEach(function (m) {
+      signals.push(sig('warn', m.id, m.label, m.detail, m.evidence));
     });
 
     /* ---- 6. the trap: claim vs field ------------------------------------- */
@@ -462,6 +498,8 @@ export const License = {
       level = 'CRITICAL';                                  // registered with an enforcement network
     } else if (derivatives.length) {
       level = 'HIGH';
+    } else if (commercialMusic.length) {
+      level = 'HIGH';                              // released commercial recording
     } else if (isCC) {
       if (conflicted || reservations.length || thirdParty.some(function (t) { return t.id.indexOf('thirdparty') > -1 && !isStandard; })) {
         level = 'HIGH';
@@ -525,6 +563,12 @@ export const License = {
         text: 'This is a no-copyright archive channel. Retroactive claims are common — go back to the original rightsholder before publishing.'
       });
     }
+    if (commercialMusic.length) {
+      obligations.push({
+        key: 'Not royalty-free',
+        text: 'This is a released commercial recording. It is not free to reuse — clear it with the label or use a licensed library instead.'
+      });
+    }
     creditReqs.forEach(function (c) {
       obligations.push({ key: 'Uploader asks for credit', text: c.evidence });
     });
@@ -577,6 +621,7 @@ export const License = {
         statedLicense: claims.some(function (c) { return /claim\.cc/i.test(c.id); }) ? 'Creative Commons (stated in text)' : 'None stated',
         monetizationTraps: monetization.map(function (m) { return m.label; }),
         derivativeFlags: derivatives.map(function (d) { return d.label; }),
+        commercialMusic: commercialMusic.map(function (m) { return m.label; }),
         ccSubtype: ccSubtype
       },
       constraints: constraints,

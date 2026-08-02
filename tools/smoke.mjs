@@ -236,7 +236,12 @@ const cases = {
     description: 'Free to use in any project!', license: '' }),
   /* Real CC string, exactly as the platform spells it. */
   realCC: L.evaluate({ id: 'g', title: 'Cloudy sky timelapse 4K', channel: 'TotallyJerks',
-    description: 'Free download.', license: 'Creative Commons Attribution license (reuse allowed)' })
+    description: 'Free download.', license: 'Creative Commons Attribution license (reuse allowed)' }),
+  /* A famous commercial track on the official "Artist - Topic" channel. No
+     Content ID fields in a flat listing, but the title shape and channel make
+     the commercial release obvious — must be HIGH, not MODERATE. */
+  famousTrack: L.evaluate({ id: 'h', title: 'Tame Impala - The Less I Know The Better (Audio)',
+    channel: 'Tame Impala - Topic', description: 'Provided to YouTube by Universal...', license: '' })
 };
 check('"royalty free" text on a Standard licence -> HIGH', cases.trap.level, 'HIGH');
 check('genuine CC BY -> LOW', cases.clean.level, 'LOW');
@@ -245,6 +250,9 @@ check('plain Standard licence -> MODERATE', cases.plain.level, 'MODERATE');
 check('empty licence field is NOT treated as cleared', cases.emptyPlain.level, 'MODERATE');
 check('empty licence + reuse claim -> HIGH', cases.emptyTrap.level, 'HIGH');
 check('live CC string is recognised', cases.realCC.level, 'LOW');
+check('obvious commercial music (official audio) -> HIGH', cases.famousTrack.level, 'HIGH');
+check('commercial music recorded as a warning signal', cases.famousTrack.counts.warn > 0, true);
+check('commercial music is overridable, not CRITICAL', L.blocked(cases.famousTrack).hard, false);
 check('empty licence never yields attribution', cases.emptyPlain.attribution, null);
 check('CRITICAL is never overridable', L.blocked(cases.contentId).hard, true);
 check('HIGH is overridable off strict mode', cases.trap.level === 'HIGH', true);

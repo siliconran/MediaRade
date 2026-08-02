@@ -3,9 +3,10 @@
 **by rad1x** — a YouTube and Uppbeat acquisition panel for Adobe Premiere Pro, built around a
 strict, evidence-based licence risk checker.
 
-Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT), Originally React based switched over to utilize SolidJS
-retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and PlayStation 2 are
-trademarks of Sony Interactive Entertainment.
+Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT),
+created by rad1x. The original PS2UI is React-based; this port runs on SolidJS, as does the rest of
+MediaRade's own UI. Retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and
+PlayStation 2 are trademarks of Sony Interactive Entertainment.
 
 ---
 
@@ -134,30 +135,50 @@ limits; check your plan's scope before using a track in advertising or for a cli
 
 ## Install
 
+The extension lives in `%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade` (`%APPDATA%` is
+`C:\Users\<you>\AppData\Roaming`). Two ways to get it there:
+
+**1. Manual install** — do it by hand:
+
+1. Clone this repo (or download it) anywhere you like.
+2. Build the panel once — needs Node.js 18+ and npm:
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Copy the three folders `CSXS\`, `dist\` and `jsx\` into
+   `%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\`:
+   ```bash
+   xcopy /e /i CSXS %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\CSXS
+   xcopy /e /i dist %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\dist
+   xcopy /e /i jsx  %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\jsx
+   ```
+4. Enable unsigned extensions once per CSXS version, then close and reopen Premiere — it reads the
+   manifest once at startup. Open **Window › Extensions › MediaRade**.
+
+**2. Automated `deploy`** — builds, runs the smoke tests, and copies `CSXS\`, `dist\`, `jsx\` and
+`.debug` into the same extensions folder:
+
 ```bash
 npm install
 npm run deploy
 ```
 
-`deploy` builds, runs the smoke tests, and copies `CSXS\`, `dist\`, `jsx\` and `.debug` into
-`%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade`. Close Premiere first — it reads the manifest
-once at startup. Then open **Window › Extensions › MediaRade**.
-
 The panel loads `dist/`, so **rebuild after any change under `src/`**. `window.MR.builtAt` shows
 which bundle is actually running; CEF caches hard, and a stale bundle looks exactly like a broken
 feature.
-
-To develop against the repo without re-copying, symlink instead (needs an elevated shell):
-
-```bash
-powershell -File tools\install.ps1 -Symlink
-```
 
 Unsigned extensions need debug mode enabled once per CSXS version. `install.ps1` checks this and
 prints the exact command if it is missing:
 
 ```bash
 reg add HKCU\Software\Adobe\CSXS.12 /v PlayerDebugMode /t REG_SZ /d 1 /f
+```
+
+To develop against the repo without re-copying, symlink instead (needs an elevated shell):
+
+```bash
+powershell -File tools\install.ps1 -Symlink
 ```
 
 ---
