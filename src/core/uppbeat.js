@@ -287,9 +287,9 @@ export const Uppbeat = {
     return session.signedIn && p !== 'free' && p !== 'none';
   },
 
-  /** Open Uppbeat's sign-in page in the real browser. No password ever reaches MediaRade. */
+  /** Open Uppbeat's login page in the real browser. No password ever reaches MediaRade. */
   openSignIn: function () {
-    CEP.openInBrowser(BASE + '/sign-in');
+    CEP.openInBrowser(BASE + '/login');
   },
 
   /**
