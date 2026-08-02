@@ -546,6 +546,33 @@ export const Uppbeat = {
     });
   },
 
+  /** One-shot cookie import: tries the configured browser, then every other
+      installed browser, and resolves with the first session that sticks.
+      Used by the sign-in popup's "I've signed in — Import session" button
+      (no long polling, no silent retries — one click, clear result). */
+  importNow: function () {
+    const configured = Config.get('uppbeatBrowser') || Config.get('cookiesFromBrowser') || 'chrome';
+    const seen = {};
+    const order = [];
+    [configured].concat(BROWSER_IDS).forEach(function (b) {
+      if (!seen[b]) { seen[b] = 1; order.push(b); }
+    });
+
+    let lastError = null;
+    function tryOne(i) {
+      if (i >= order.length) {
+        return Promise.reject(lastError || new Error('No browser could be read.'));
+      }
+      return Uppbeat.importSession(order[i]).then(function (s) {
+        return Object.assign({}, s, { browser: order[i] });
+      }).catch(function (e) {
+        lastError = e;
+        return tryOne(i + 1);
+      });
+    }
+    return tryOne(0);
+  },
+
   /** Netscape cookie jar -> "k=v; k=v" for uppbeat.io only. */
   parseJar: function (text) {
     if (!text) return '';
