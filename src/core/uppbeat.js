@@ -48,33 +48,109 @@ export const DEFAULT_ENDPOINTS = {
   download: '/api/v1/tracks/{id}/download'
 };
 
-/* Browsers yt-dlp can copy cookies from. Chrome and Edge (v127+) encrypt their
-   cookie stores with App-Bound Encryption that yt-dlp cannot decrypt while the
-   browser is running — Firefox keeps working, so it is the one the flow will
-   prefer when the configured browser fails. */
-export const SUPPORTED_BROWSERS = ['firefox', 'chrome', 'edge', 'brave', 'opera', 'vivaldi', 'chromium'];
+/* Empty string = yt-dlp is told the profile folder "behind" `firefox`-family
+   browsers is resolved automatically; set a folder here (Setup › Uppbeat) to
+   force it — the catch-all that makes any homebrew / portable install work. */
+const BROWSER_PROFILE_KEY = 'uppbeatProfilePath';
 
-/** Best-effort check that a browser's profile directory exists. */
+/* ---------------------------------------------------------------------------
+   Browser registry — the browsers we can copy cookies from.
+   - chromium family (chrome/edge/brave/opera/vivaldi/chromium/whale): yt-dlp
+     locates their store natively with `--cookies-from-browser <id>`.
+   - firefox family (firefox and forks like r3dfox/LibreWolf/Waterfox share the
+     same profile format): we hand yt-dlp `--cookies-from-browser firefox[:<root>]`
+     where <root> is the folder holding `profiles.ini`. Each fork lists its known
+     install roots; a user profile path in Setup overrides auto-resolution for
+     portable / unusual installs.
+   Chrome & Edge (v127+) encrypt their own cookie stores with App-Bound
+   Encryption, so yt-dlp cannot decrypt them while the browser is running — the
+   fallback chain drops onto whichever Firefox-family browser is installed.
+   ------------------------------------------------------------------------ */
+export const BROWSERS = [
+  { id: 'firefox',    label: 'Firefox',   family: 'fox', roots: ['%APPDATA%\\Mozilla\\Firefox'] },
+  { id: 'r3dfox',     label: 'r3dfox',    family: 'fox', roots: ['%APPDATA%\\r3dfox', '%LOCALAPPDATA%\\r3dfox'] },
+  { id: 'librewolf',  label: 'LibreWolf', family: 'fox', roots: ['%APPDATA%\\librewolf\\Profiles', '%LOCALAPPDATA%\\librewolf\\Profiles'] },
+  { id: 'waterfox',   label: 'Waterfox',  family: 'fox', roots: ['%APPDATA%\\Waterfox\\Profiles'] },
+  { id: 'chrome',     label: 'Chrome',    family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\Google\\Chrome\\User Data'] },
+  { id: 'edge',       label: 'Edge',      family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\Microsoft\\Edge\\User Data'] },
+  { id: 'brave',      label: 'Brave',     family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data'] },
+  { id: 'opera',      label: 'Opera',     family: 'chromium',
+    roots: ['%APPDATA%\\Opera Software\\Opera Stable'] },
+  { id: 'vivaldi',    label: 'Vivaldi',   family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\Vivaldi\\User Data'] },
+  { id: 'chromium',   label: 'Chromium',  family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\Chromium\\User Data'] },
+  { id: 'whale',      label: 'Whale',     family: 'chromium',
+    roots: ['%LOCALAPPDATA%\\Naver\\Naver Whale\\User Data', '%LOCALAPPDATA%\\Naver\\Naver\\User Data'] }
+];
+
+export const BROWSER_IDS = BROWSERS.map(function (b) { return b.id; });
+
+function envDirs() {
+  let h = null;
+  try { h = CEP.os.homedir(); } catch (e) { return null; }
+  if (!h) return null;
+  return { appdata: h + '\\AppData\\Roaming', localappdata: h + '\\AppData\\Local' };
+}
+
+function expand(p) {
+  const d = envDirs();
+  if (!d) return null;
+  return p.replace('%APPDATA%', d.appdata).replace('%LOCALAPPDATA%', d.localappdata);
+}
+
+function browserMeta(b) {
+  for (let i = 0; i < BROWSERS.length; i++) {
+    if (BROWSERS[i].id === b) return BROWSERS[i];
+  }
+  return null;
+}
+
+/** True if the browser's profile data (or a forced profile path) is present. */
 function browserInstalled(b) {
-  let home = null;
-  try { home = CEP.os.homedir(); } catch (e) { return false; }
-  const L = home + '\\AppData\\Local';
-  const R = home + '\\AppData\\Roaming';
-  const profiles = {
-    firefox: [R + '\\Mozilla\\Firefox\\Profiles'],
-    chrome: [L + '\\Google\\Chrome\\User Data'],
-    edge: [L + '\\Microsoft\\Edge\\User Data'],
-    brave: [L + '\\BraveSoftware\\Brave-Browser\\User Data'],
-    opera: [R + '\\Opera Software\\Opera Stable'],
-    vivaldi: [L + '\\Vivaldi\\User Data'],
-    chromium: [L + '\\Chromium\\User Data']
-  };
-  const list = profiles[b] || [];
+  const m = browserMeta(b);
+  if (!m) return false;
+  if (Config.get(BROWSER_PROFILE_KEY)) return true;
+  const list = m.roots || [];
   for (let i = 0; i < list.length; i++) {
-    if (Paths.exists(list[i])) return true;
+    const p = expand(list[i]);
+    if (p && Paths.exists(p)) return true;
   }
   return false;
 }
+
+/** Resolve the folder holding `profiles.ini` for a Firefox-family browser,
+    or the one the user forced in Setup. Null when it cannot be found. */
+function foxRoot(id) {
+  const forced = Config.get(BROWSER_PROFILE_KEY);
+  if (forced && Paths.exists(forced)) return forced;
+  const m = browserMeta(id);
+  if (!m) return null;
+  const list = m.roots || [];
+  for (let i = 0; i < list.length; i++) {
+    const root = expand(list[i]);
+    if (!root || !Paths.exists(root)) continue;
+    if (Paths.exists(root + '\\profiles.ini')) return root;
+    if (Paths.exists(root + '\\Profiles\\profiles.ini')) return root + '\\Profiles';
+    if (Paths.exists(root + '\\Profiles')) return root + '\\Profiles';
+  }
+  return null;
+}
+
+/** The `--cookies-from-browser` value for a browser id (null = unresolvable). */
+function cookiesArg(id) {
+  const m = browserMeta(id);
+  if (!m) return id;
+  if (m.family === 'chromium') return id;
+  const root = foxRoot(id);
+  if (!root) return id === 'firefox' ? 'firefox' : null;
+  return 'firefox:' + root;
+}
+
+export { browserInstalled, foxRoot, cookiesArg };
 
 /* --- session ------------------------------------------------------------- */
 
@@ -279,8 +355,11 @@ function extractTracks(json) {
 export const Uppbeat = {
   BASE: BASE,
   DEFAULT_ENDPOINTS: DEFAULT_ENDPOINTS,
-  SUPPORTED_BROWSERS: SUPPORTED_BROWSERS,
+  BROWSERS: BROWSERS,
+  BROWSER_IDS: BROWSER_IDS,
   browserInstalled: browserInstalled,
+  cookiesArg: cookiesArg,
+  foxRoot: foxRoot,
 
   /* --- session ----------------------------------------------------------- */
 
@@ -339,7 +418,7 @@ export const Uppbeat = {
    */
   signIn: function (onTick) {
     const configured = Config.get('uppbeatBrowser') || 'chrome';
-    const candidates = [configured].concat(SUPPORTED_BROWSERS.filter(function (b) {
+    const candidates = [configured].concat(BROWSER_IDS.filter(function (b) {
       return b !== configured && Uppbeat.browserInstalled(b);
     }));
     const max = Config.get('uppbeatSignInTries') || 40;      // ~3.5 minutes
@@ -421,7 +500,13 @@ export const Uppbeat = {
     const jar = CEP.path.join(Paths.dir('cache'), 'uppbeat-cookies.txt');
     Paths.remove(jar);
 
-    const args = ['--cookies-from-browser', browser, '--cookies', jar,
+    const cookieFrom = cookiesArg(browser);
+    if (cookieFrom === null) {
+      return Promise.reject(new Error('Could not find ' + browser + '\'s profile folder. Sign in with it, ' +
+        'then — if it is a portable/homebrew build — set its profile folder in Setup › Uppbeat › Custom profile folder.'));
+    }
+
+    const args = ['--cookies-from-browser', cookieFrom, '--cookies', jar,
                   '--skip-download', '--ignore-errors', '--no-warnings', '--ignore-config',
                   'unsupported:uppbeat-cookies-only'];
 

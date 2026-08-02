@@ -424,6 +424,23 @@ body.is-dragging-media #app { opacity: 0.82; transition: opacity var(--ps2-dur-f
 }
 
 /* =============================================================================
+   log view
+   ========================================================================== */
+.mr-logview .mr-view__toolbar {
+  flex-wrap: wrap;
+  gap: var(--ps2-space-2);
+  align-items: center;
+  margin-bottom: var(--ps2-space-2);
+}
+.mr-logview .mr-view__toolbar .mr-logview__path {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =============================================================================
    download options
    ========================================================================== */
 
