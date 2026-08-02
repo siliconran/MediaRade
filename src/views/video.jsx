@@ -408,13 +408,13 @@ export function VideoView() {
                 button becomes a drag handle, so the thing you just fetched is
                 draggable from where you fetched it. */}
             <div class="ps2-row-gap ps2-wrap">
-              <AcquireButton kind="both" label="Video + audio" primary
+              <AcquireButton kind="both" label="Video & Audio" primary
                 title="One file with the picture and sound muxed together"
                 spec={spec} id={currentId} local={localFor} />
-              <AcquireButton kind="video" label="Video only"
+              <AcquireButton kind="video" label="Video Only"
                 title="Video stream — silent if the source has a separate audio track"
                 spec={spec} id={currentId} local={localFor} />
-              <AcquireButton kind="audio" label="Audio only"
+              <AcquireButton kind="audio" label="Audio Only"
                 title="Extracted audio in the format chosen above"
                 spec={spec} id={currentId} local={localFor} />
               <CopyAttribution report={report()} info={info()} size={null} />

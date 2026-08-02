@@ -408,9 +408,19 @@ check('one-shot importNow is exposed for the sign-in popup', typeof UB.importNow
   const before = shims.SPAWNED.length;
   await UB.importNow().catch(function () {});
   const args = shims.SPAWNED.slice(before).find(function (a) { return a.indexOf('--cookies-from-browser') > -1; }) || [];
-  check('importNow drives yt-dlp with the offline cookie URL',
+check('importNow drives yt-dlp with the offline cookie URL',
     args.indexOf('unsupported:uppbeat-cookies-only') > -1 && args.indexOf('https://uppbeat.io/') === -1, true);
 }
+check('manual cookie parser handles a Cookie header',
+  UB.parseManualCookies('Cookie: session=abc; auth_token=xyz'), 'session=abc; auth_token=xyz');
+check('manual cookie parser handles line-separated pairs',
+  UB.parseManualCookies('session=abc\nauth_token=xyz'), 'session=abc; auth_token=xyz');
+check('manual cookie parser handles a Cookie-Editor JSON export',
+  UB.parseManualCookies('[{"name":"auth_token","value":"xyz","domain":".uppbeat.io"}]'), 'auth_token=xyz');
+check('setAuthToken is exposed', typeof UB.setAuthToken, 'function');
+UB.setAuthToken('xyzsecret');
+check('setAuthToken stores the auth_token cookie', UB.session().cookies, 'auth_token=xyzsecret');
+UB.clearSession();
 
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',

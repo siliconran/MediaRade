@@ -69,7 +69,7 @@ export function LogView() {
         <span class="ps2-panel__spacer" />
         <span class="ps2-caption" style={{ whiteSpace: 'nowrap' }}>{stamp() ? 'updated ' + stamp() : ''}</span>
         <input class="ps2-input" type="text" placeholder="Filter…"
-          style={{ width: '150px', flex: '0 0 auto', padding: '4px 8px' }}
+          style={{ flex: '1 1 160px', minWidth: '90px', padding: '4px 8px' }}
           onInput={(e) => setText(e.currentTarget.value)} />
         <Chip label="Auto-scroll" on={autoScroll()} onChange={(on) => setAutoScroll(on)} />
         <button class="ps2-btn ps2-btn--sm" onClick={() => refresh(true)}>Refresh</button>

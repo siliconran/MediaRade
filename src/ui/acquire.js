@@ -56,8 +56,8 @@ export const Acquire = {
     try {
       const jobs = [Queue.add(spec)];
       const label = kind === 'both'
-        ? 'Video + audio queued (one file)'
-        : (kind === 'audio' ? 'Audio queued' : 'Video queued');
+        ? 'Video & Audio queued (one file)'
+        : (kind === 'audio' ? 'Audio Only queued' : 'Video Only queued');
       const extra = (override && override.override)
         ? ' — override recorded in the ledger.'
         : (report && report.level === 'LOW'

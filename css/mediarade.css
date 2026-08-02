@@ -439,6 +439,13 @@ body.is-dragging-media #app { opacity: 0.82; transition: opacity var(--ps2-dur-f
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mr-logview__toolbar { min-width: 0; }
+.mr-logview__toolbar .ps2-btn,
+.mr-logview__toolbar .ps2-chip,
+.mr-logview__toolbar .mr-filters__label,
+.mr-logview__toolbar .mr-logview__path { flex: 0 0 auto; }
+.mr-logview__toolbar input.ps2-input { flex: 1 1 160px !important; min-width: 90px; }
+.mr-logview__toolbar .ps2-panel__spacer { flex: 1 1 12px; }
 
 /* =============================================================================
    download options
