@@ -31,7 +31,6 @@ export function UppbeatView() {
   const [busy, setBusy] = createSignal(null);      // trackId currently downloading
   const [progress, setProgress] = createSignal(0);
   const [playing, setPlaying] = createSignal(null);
-  const [signingIn, setSigningIn] = createSignal(null);   // { attempt, max } while polling
   const [freeOnly, setFreeOnly] = createSignal(false);    // hide premium tracks from results
 
   let input, audioEl;
@@ -69,49 +68,103 @@ export function UppbeatView() {
 
   /* --- session ------------------------------------------------------------ */
 
-  /**
-   * One button does the whole thing: open uppbeat.io in the real browser, then
-   * keep polling until the session cookies appear. No password ever reaches
-   * MediaRade, and there is nothing for the user to copy or paste.
-   */
-  let signInJob = null;
+  /** A dedicated sign-in popup: shows the login URL, a one-click import, and a
+      manual cookie-paste escape hatch — so it works no matter which browser is
+      used (Chrome/Edge v127+ refuse to share cookies while running; portable
+      forks like r3dfox may not resolve). No password ever reaches MediaRade. */
+  function openSignInPopup() {
+    const loginUrl = 'https://uppbeat.io/login';
 
-  function signIn() {
-    if (signingIn()) { cancelSignIn(); return; }
-    setError(null);
-    setSigningIn({ attempt: 0, max: Config.get('uppbeatSignInTries') || 40 });
+    const status = U.el('div', { class: 'ps2-caption',
+      style: { marginTop: '8px', minHeight: '16px' } });
+    const setStatus = function (msg, tone) {
+      status.textContent = msg || '';
+      status.style.color = tone === 'err' ? 'var(--ps2-crit)'
+        : tone === 'ok' ? 'var(--ps2-ok)' : 'var(--ps2-text-tertiary)';
+    };
 
-    signInJob = Uppbeat.signIn(function (attempt, max, info) {
-      setSigningIn({ attempt: attempt, max: max,
-                     error: (info && info.message) || null,
-                     browser: (info && info.browser) || null });
+    const importBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
+      text: "I've signed in — Import session" });
+    const manualText = U.el('textarea', {
+      class: 'ps2-input', rows: 3,
+      placeholder: 'e.g.  session=Abc123…  — or paste the whole Cookie header from DevTools',
+      style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' }
     });
+    const manualBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
+      text: 'Use this session', style: { marginTop: '6px' } });
 
-    signInJob.then(function (s) {
-      signInJob = null;
-      setSigningIn(null);
-      syncSession();
+    function finish(s) {
       const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
       Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
         (s.browser ? ' (via ' + s.browser + ')' : ''));
       if (input && input.value.trim()) doSearch();
-    }).catch(function (e) {
-      signInJob = null;
-      setSigningIn(null);
-      if (e && e.cancelled) return;
-      setError(e.message);
-      Toast.err('Sign-in did not complete', e.message);
+    }
+
+    importBtn.addEventListener('click', function () {
+      importBtn.disabled = true;
+      setStatus('Reading cookies from your browser…', '');
+      Uppbeat.importNow().then(function (s) {
+        importBtn.disabled = false;
+        setStatus('Session imported.', 'ok');
+        Modal.close();
+        syncSession();
+        finish(s);
+      }).catch(function (e) {
+        importBtn.disabled = false;
+        setStatus('Could not read your browser cookies: ' + e.message, 'err');
+      });
+    });
+
+    manualBtn.addEventListener('click', function () {
+      try {
+        Uppbeat.setCookiesManually(manualText.value).then(function (s) {
+          Modal.close();
+          syncSession();
+          finish(s);
+        });
+      } catch (e) {
+        setStatus('That cookie was not accepted: ' + e.message, 'err');
+      }
+    });
+
+    Modal.open({
+      title: 'Sign in to Uppbeat',
+      body: U.el('div', { class: 'ps2-col-gap' }, [
+        U.el('div', { class: 'ps2-caption', html:
+          '<b>1.</b> Sign in at uppbeat.io — MediaRade never sees your password. ' +
+          'Then return here and click <b>Import session</b>.' }),
+        U.el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, [
+          U.el('div', { class: 'mr-attrib', style: { margin: '6px 0', userSelect: 'text', flex: '1 1 auto', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis' }, text: loginUrl }),
+          U.el('button', { class: 'ps2-btn ps2-btn--sm', text: 'Open', title: 'Open the login page',
+            onclick: function () { Uppbeat.openSignIn(); } }),
+          U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--ghost', text: 'Copy URL',
+            onclick: function () { U.copy(loginUrl); } })
+        ]),
+        U.el('div', { class: 'ps2-row-gap ps2-wrap' }, [ importBtn ]),
+        status,
+        U.el('hr', { class: 'ps2-hr' }),
+        U.el('div', { class: 'ps2-caption', html:
+          '<b>Stuck?</b> Chrome and Edge (v127+) refuse to share cookies while they are running, ' +
+          'and portable browsers like r3dfox need their profile folder set in <b>Setup › Uppbeat</b>. ' +
+          'Any browser works with the manual route: press <b>F12 → Application → Cookies → uppbeat.io</b>, ' +
+          'copy the session cookie as <code>name=value</code>, paste it below.' }),
+        manualText,
+        U.el('div', {}, [ manualBtn ])
+      ]),
+      buttons: [{ label: 'Close', run: function () { Modal.close(); } }]
     });
   }
 
-  function cancelSignIn() {
-    if (signInJob && signInJob.cancel) signInJob.cancel();
-    signInJob = null;
-    setSigningIn(null);
-    Toast.info('Sign-in cancelled', 'Press Sign in again when you are ready.');
+  function refreshSession() {
+    Uppbeat.importNow().then(function (s) {
+      syncSession();
+      Toast.ok('Session refreshed', 'Imported via ' + (s.browser || 'browser') + ' — plan: ' + (s.plan || 'free'));
+    }).catch(function (e) {
+      Toast.err('Could not refresh', e.message);
+    });
   }
 
-function signOut() {
+  function signOut() {
     Uppbeat.clearSession();
     syncSession();
     setResults([]);
@@ -312,22 +365,20 @@ function signOut() {
             <span class="mr-filters__label">Account</span>
             <Show
               when={signedIn()}
-              fallback={<Badge text={signingIn() ? 'waiting for browser…' : 'not signed in'}
-                kind={signingIn() ? 'info' : 'mute'} />}
+              fallback={<Badge text="not signed in" kind="mute" />}
             >
               <Badge text={premium() ? 'premium · ' + plan() : 'free plan'} kind={premium() ? 'ok' : 'warn'} />
             </Show>
 
             <Show when={!signedIn()}>
-              <Btn size="sm" variant={signingIn() ? 'danger' : 'primary'}
-                label={signingIn() ? 'Cancel sign-in' : 'Sign in'}
-                title="Opens uppbeat.io in your browser. Sign in there and MediaRade picks the session up on its own — your password never reaches this panel."
-                onClick={signIn} />
+              <Btn size="sm" variant="primary" label="Sign in"
+                title="Opens a popup with the login URL and a one-click session import — plus a manual cookie-paste fallback. Your password never reaches this panel."
+                onClick={openSignInPopup} />
             </Show>
 
             <Show when={signedIn()}>
               <Btn size="sm" label="Refresh" title="Re-import the session and re-check your plan"
-                onClick={signIn} />
+                onClick={refreshSession} />
               <Btn size="sm" variant="ghost" label="Sign out" onClick={signOut} />
             </Show>
           </div>
@@ -343,22 +394,6 @@ function signOut() {
               onClick={ingestPicker} />
           </div>
         </div>
-
-        <Show when={signingIn()}>
-          <div class="mr-claimwarn" style={{ 'margin-bottom': '6px' }}>
-            <span>⏳</span>
-            <span>
-              {'Waiting for you to sign in at uppbeat.io. MediaRade is checking for the session every few seconds (' +
-               signingIn().attempt + '/' + signingIn().max + ') and will pick it up automatically.'}
-              <Show when={signingIn().error}>
-                <div style={{ 'margin-top': '6px' }}>
-                  <b>{signingIn().browser ? 'Tried ' + signingIn().browser + ': ' : 'Last attempt: '}</b>
-                  {signingIn().error}
-                </div>
-              </Show>
-            </span>
-          </div>
-        </Show>
 
         <div class="mr-presets">
           <For each={GENRE_PRESETS}>
@@ -407,10 +442,10 @@ function signOut() {
           <Empty
             title="Sign in to Uppbeat"
             hint={
-              'Press <b>Sign in</b> and MediaRade opens uppbeat.io in your browser. Sign in there as normal — ' +
-              'the panel never sees your password — and it picks up the session on its own, then unlocks the ' +
-              'catalogue and downloads for your plan.'}
-            action={<Btn variant="primary" label={signingIn() ? 'Cancel sign-in' : 'Sign in'} onClick={signIn} />}
+              'Press <b>Sign in</b> for a popup with the uppbeat.io login URL. Sign in there as normal — ' +
+              'the panel never sees your password — then click <b>Import session</b>. If your browser cannot ' +
+              'share its cookies, the popup also accepts a pasted session cookie from DevTools.'}
+            action={<Btn variant="primary" label="Sign in" onClick={openSignInPopup} />}
           />
         </Show>
 

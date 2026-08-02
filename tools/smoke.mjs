@@ -395,6 +395,14 @@ check('browser fallback list is exposed', Array.isArray(UB.BROWSERS) &&
   check('cookie import never fetches uppbeat.io (offline URL)',
     args.indexOf('unsupported:uppbeat-cookies-only') > -1 && args.indexOf('https://uppbeat.io/') === -1, true);
 }
+check('one-shot importNow is exposed for the sign-in popup', typeof UB.importNow, 'function');
+{
+  const before = shims.SPAWNED.length;
+  await UB.importNow().catch(function () {});
+  const args = shims.SPAWNED.slice(before).find(function (a) { return a.indexOf('--cookies-from-browser') > -1; }) || [];
+  check('importNow drives yt-dlp with the offline cookie URL',
+    args.indexOf('unsupported:uppbeat-cookies-only') > -1 && args.indexOf('https://uppbeat.io/') === -1, true);
+}
 
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',
