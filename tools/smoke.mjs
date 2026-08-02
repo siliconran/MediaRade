@@ -498,6 +498,14 @@ check('sign-in is offered', ubText.toUpperCase().includes('SIGN IN'), true);
 check('the mode selector is gone (direct is the only mode)',
   ubText.toLowerCase().includes('assisted (browser)'), false);
 check('one-step browser sign-in exists', typeof UB.signIn, 'function');
+{
+  let opened = '';
+  const origOpen = win.open;
+  win.open = (u) => { opened = u; return {}; };
+  UB.openSignIn();
+  win.open = origOpen;
+  check('login opens https://uppbeat.io/login', opened, 'https://uppbeat.io/login');
+}
 check('ingest survives as a fallback', ubText.toUpperCase().includes('INGEST A FILE'), true);
 
 /* ========================================================================== */
