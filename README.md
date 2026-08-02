@@ -3,8 +3,7 @@
 **by rad1x** — a YouTube and Uppbeat acquisition panel for Adobe Premiere Pro, built around a
 strict, evidence-based licence risk checker.
 
-Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT),
-created by rad1x. The original PS2UI is React-based; this port runs on SolidJS, as does the rest of
+Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT), port by rad1x. The original PS2UI is React-based; this port runs on SolidJS, as does the rest of
 MediaRade's own UI. Retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and
 PlayStation 2 are trademarks of Sony Interactive Entertainment.
 
