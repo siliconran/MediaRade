@@ -421,6 +421,14 @@ check('setAuthToken is exposed', typeof UB.setAuthToken, 'function');
 UB.setAuthToken('xyzsecret');
 check('setAuthToken stores the auth_token cookie', UB.session().cookies, 'auth_token=xyzsecret');
 UB.clearSession();
+check('setPlan is exposed', typeof UB.setPlan, 'function');
+UB.setAuthToken('xyzsecret');
+UB.setPlan('creator');
+check('setPlan forces a paid plan', UB.isPremium(), true);
+UB.setPlan('redetect');
+check('setPlan redetect keeps signed-in premium path even if /me is unreachable',
+  typeof UB.session().cookies, 'string');
+UB.clearSession();
 
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',
