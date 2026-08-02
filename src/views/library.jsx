@@ -17,6 +17,20 @@ import Modal from '../ui/modal.js';
 import Place from '../ui/place.js';
 import { Badge, Btn, Chip, Empty } from '../ui/components.jsx';
 
+/** Thumbnail background layers: the local cache file first, network fallback
+    second. Local paths must go through CEP.toFileUrl; remote (http/https)
+    thumbs are URLs already and would be mangled into a bogus file:// path. */
+function thumbBg(entry) {
+  const t = entry && entry.thumb;
+  const local = t ? (t.indexOf('http') === 0 ? t : CEP.toFileUrl(t)) : '';
+  const net = entry && entry.videoId && entry.videoId.indexOf('manual:') !== 0
+    ? U.thumb(entry.videoId) : '';
+  const layers = [];
+  if (local) layers.push('url("' + local + '")');
+  if (net) layers.push('url("' + net + '")');
+  return layers.join(', ');
+}
+
 export function LibraryView() {
   const [kind, setKind] = createSignal('all');
   const [tier, setTier] = createSignal('all');
@@ -176,7 +190,7 @@ function LibraryItem(props) {
     <div class="mr-lib-item">
       <div
         class="mr-lib-item__thumb"
-        style={{ backgroundImage: e().thumb ? 'url("' + CEP.toFileUrl(e().thumb) + '"), url("' + U.thumb(e().videoId) + '")' : '' }}
+        style={{ backgroundImage: thumbBg(e()) }}
         title="Drag onto Premiere's timeline or project panel"
         ref={(el) => DnD.native(el, function () { return payload(); })}
       >
