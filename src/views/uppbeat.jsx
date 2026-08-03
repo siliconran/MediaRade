@@ -116,16 +116,16 @@ export function UppbeatView() {
 
     /* Dedicated field for the one cookie that carries the login. */
     const tokenIn = U.el('input', { class: 'ps2-input', type: 'text',
-      placeholder: 'the auth_token value',
+      placeholder: 'the auth_token / authorization_token value',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
     const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
-      text: 'Use auth_token', title: 'For when the browser import can\'t read cookies — paste just the auth_token value from Cookie Editor or DevTools',
+      text: 'Use token', title: 'For when the browser import can\'t read cookies — paste the auth_token or authorization_token value from Cookie Editor or DevTools',
       style: { marginTop: '6px' } });
     tokenBtn.addEventListener('click', function () {
       try {
         Uppbeat.setAuthToken(tokenIn.value).then(withSession);
       } catch (e) {
-        setStatus('Could not use that auth_token: ' + e.message, 'err');
+        setStatus('Could not use that token: ' + e.message, 'err');
       }
     });
 
@@ -215,7 +215,7 @@ export function UppbeatView() {
           tokenIn,
           U.el('div', {}, [ tokenBtn ]),
           U.el('div', { class: 'ps2-caption', html:
-            'In Cookie Editor (or DevTools → Application → Cookies → <code>uppbeat.io</code>), find <b>auth_token</b>, copy its <b>value</b> into the box above — that single cookie is the whole login.' }),
+            'In Cookie Editor (or DevTools → Application → Cookies → <code>uppbeat.io</code>), copy the <b>value</b> of <code>auth_token</code> or <code>authorization_token</code> into the box above — the panel sends it under both names so either one works. If it still 429s, also tick <b>This account is paid</b> below.' }),
           U.el('hr', { class: 'ps2-hr' }),
           manualText,
           U.el('div', {}, [ manualBtn ]),
