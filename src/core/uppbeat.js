@@ -299,14 +299,20 @@ function httpDownload(url, destPath, onProgress, depth) {
   return p;
 }
 
-function explainStatus(status, what) {
+function explainStatus(status, what, res) {
   if (status === 401 || status === 403) {
     return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — press ' +
            '"Sign in" to re-open uppbeat.io in your browser and pick the session up again.';
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
   if (status === 404) return 'Uppbeat returned 404 for the ' + what + ' endpoint. Their API path has probably changed — update it in Setup › Uppbeat.';
-  if (status === 429) return 'Uppbeat is refusing these requests (429). Usually it flags the client as a bot — re-import your session (press "Sign in"), then wait ~30s before retrying. If it persists the API path in Setup › Uppbeat has likely changed.';
+  if (status === 429) {
+    const host = res && res.headers && res.headers.server ? ' (' + res.headers.server + ')' : '';
+    const retry = res && res.headers && res.headers['retry-after'];
+    return 'Uppbeat is rate-limiting requests from your network (HTTP 429' + host + '). This is per-network, not per-account — ' +
+      'wait a few minutes before retrying' + (retry ? ' (~' + retry + 's)' : '') +
+      '. Your session was imported fine; tick "this account is paid" in Sign in to unlock premium while the limiter resets.';
+  }
   return 'Uppbeat returned HTTP ' + status + ' for the ' + what + ' request.';
 }
 
@@ -743,11 +749,13 @@ export const Uppbeat = {
     _attempt = _attempt || 0;
     const url = path.indexOf('http') === 0 ? path : BASE + path;
     return httpGet(url).then(function (res) {
-      if (res.status === 429 && _attempt < 2) {
-        return new Promise(function (resolve) { setTimeout(resolve, 3000 * (_attempt + 1)); })
+      /* 429 is an IP-level limit at Uppbeat's edge (Vercel) — retrying just
+         feeds it and extends the window. Only auto-retry transient 5xx. */
+      if (res.status >= 500 && _attempt < 2) {
+        return new Promise(function (resolve) { setTimeout(resolve, 2000 * (_attempt + 1)); })
           .then(function () { return Uppbeat.json(path, what, _attempt + 1); });
       }
-      if (res.status !== 200) throw new Error(explainStatus(res.status, what || 'API'));
+      if (res.status !== 200) throw new Error(explainStatus(res.status, what || 'API', res));;
       let json;
       try { json = JSON.parse(res.body); }
       catch (e) {
@@ -795,6 +803,8 @@ export const Uppbeat = {
       return {
         endpoint: url,
         status: res.status,
+        server: (res.headers && res.headers.server) || '',
+        retryAfter: (res.headers && res.headers['retry-after']) || '',
         signedIn: !!session.cookies,
         cookieNames: (session.cookies || '').split('; ').filter(Boolean)
           .map(function (c) { return c.split('=')[0]; }).join(', ') || '(none)',
