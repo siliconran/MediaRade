@@ -611,7 +611,7 @@ export const Uppbeat = {
       Uppbeat.saveSession();
       Paths.log('uppbeat: session imported from ' + browser);
 
-      return Uppbeat.me().catch(function () { return session; });
+      return Uppbeat.refreshPlan();
     });
   },
 
@@ -670,7 +670,7 @@ export const Uppbeat = {
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
-    return Uppbeat.me().catch(function () { return session; });
+    return Uppbeat.refreshPlan();
   },
 
   /** Give the login token directly (copy from Cookie Editor / DevTools).
@@ -689,7 +689,7 @@ export const Uppbeat = {
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
-    return Uppbeat.me().catch(function () { return session; });
+    return Uppbeat.refreshPlan();
   },
 
   /* --- email & password (driven through a real Chrome window) -------------
@@ -772,16 +772,67 @@ export const Uppbeat = {
     });
   },
 
+  /**
+   * Re-check the stored session's plan through a real Chrome window. The panel
+   * Node HTTP client is always 429'd by Uppbeat's Vercel checkpoint, so the
+   * only client that can answer "what plan is this session" is a real browser:
+   * we hand it the current cookies, let Chrome pass the checkpoint, and it
+   * fetches /api/v1/me for us. Returns the session (with planError set if it
+   * could not be verified).
+   */
+  verifyInBrowser: function () {
+    if (!session.cookies) return Promise.reject(new Error('No Uppbeat session to verify — sign in first.'));
+    return Uppbeat.findNode().then(function (node) {
+      if (!node) throw new Error('Could not find a system Node.js to drive Chrome for the plan check.');
+      const script = Uppbeat.helperPath();
+      if (!script) throw new Error('Node is unavailable in this panel — the plan check needs the bundled Node runtime.');
+      return Proc.run(node, [script, '--verify', '--timeout', '60000'], {
+        stdin: session.cookies + '\n',
+        timeout: 90000,
+        maxBuffer: 3e6
+      }).then(function (r) {
+        let out = null;
+        const m = r.stdout.match(/\{[\s\S]*\}/);
+        if (m) { try { out = JSON.parse(m[0]); } catch (e) {} }
+        if (r.code !== 0 || !out || !out.ok) {
+          const err = (out && out.error) || 'The plan check did not complete.';
+          throw new Error(err);
+        }
+        const acct = out.me && (out.me.user || out.me.data || out.me);
+        if (acct) {
+          session.account = {
+            email: pick(acct, ['email', 'user.email']),
+            name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
+          };
+          session.plan = readPlan(acct) || 'free';
+        } else {
+          session.plan = 'free';
+        }
+        session.planError = null;
+        session.signedIn = true;
+        Uppbeat.saveSession();
+        return session;
+      });
+    });
+  },
+
+  /** Best-effort plan refresh: prefers the real-browser verify (which can pass
+      the Vercel checkpoint), falling back to the direct Node call (which the
+      edge usually 429s, but is the only option if a browser isn't available). */
+  refreshPlan: function () {
+    return Uppbeat.verifyInBrowser()
+      .catch(function () { return Uppbeat.me().catch(function () { return session; }); });
+  },
+
   /** Manual plan override — for when Uppbeat won't report the account level
       (e.g. /me is blocked) but you know it's paid. Passing a plan name like
       'creator' unlocks premium; 'auto'/'redetect' re-runs detection instead
       (used when you untick the override). */
-  setPlan: function (plan) {
-    const name = String(plan == null ? '' : plan).trim().toLowerCase();
+  setPlan: function (plan) {    const name = String(plan == null ? '' : plan).trim().toLowerCase();
     if (name === 'auto' || name === 'redetect' || name === 'auto-redetect') {
       session.plan = 'free';
       Uppbeat.saveSession();
-      return Uppbeat.me().catch(function () { return session; });
+      return Uppbeat.refreshPlan();
     }
     session.plan = name || 'free';
     session.signedIn = true;
