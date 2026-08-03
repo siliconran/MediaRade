@@ -191,6 +191,20 @@ function sessionHeaders(extra) {
     h.Cookie = session.cookies;
     const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
     if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
+    /* Uppbeat may read the session from EITHER the `authorization_token` or
+       `auth_token` cookie, and may want it as a Bearer header instead of a
+       cookie. Cover all of them with whichever token we have, so "either one
+       works" — the right one is used by the server, the rest are ignored. */
+    const tok = session.cookies.match(/(?:^|;\s*)(authorization_token|auth_token)=([^;]+)/i);
+    if (tok) {
+      let v = tok[2].trim();
+      try { v = decodeURIComponent(v); } catch (e) {}
+      if (v) {
+        if (tok[1].toLowerCase() === 'authorization_token') h['Authorization'] = 'Bearer ' + v;
+        h['X-Authorization-Token'] = v;
+        h['X-Auth-Token'] = v;
+      }
+    }
   }
   return h;
 }
@@ -659,13 +673,19 @@ export const Uppbeat = {
     return Uppbeat.me().catch(function () { return session; });
   },
 
-  /** The one cookie that carries the login: give Uppbeat's `auth_token` value
-      directly (copy it from Cookie Editor / DevTools) and skip the rest. */
+  /** Give the login token directly (copy from Cookie Editor / DevTools).
+      Cookie Editor shows two names for it — `auth_token` and the fully
+      spelled-out `authorization_token`. We don't know which one Uppbeat
+      actually reads, so write the value under BOTH names (the server uses
+      whichever is right and ignores the other). If the pasted text is already
+      a `name=value` pair (e.g. `authorization_token=…`), route it through the
+      full cookie parser so the name you supplied is preserved exactly. */
   setAuthToken: function (token) {
     const raw = String(token == null ? '' : token)
       .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
-    if (!raw) throw new Error('Paste the auth_token value first.');
-    session.cookies = 'auth_token=' + raw;
+    if (!raw) throw new Error('Paste the token value first.');
+    if (raw.indexOf('=') > -1) return Uppbeat.setCookiesManually(raw);
+    session.cookies = 'auth_token=' + raw + '; authorization_token=' + raw;
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();

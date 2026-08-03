@@ -435,7 +435,14 @@ check('manual cookie parser handles a Cookie-Editor JSON export',
   UB.parseManualCookies('[{"name":"auth_token","value":"xyz","domain":".uppbeat.io"}]'), 'auth_token=xyz');
 check('setAuthToken is exposed', typeof UB.setAuthToken, 'function');
 UB.setAuthToken('xyzsecret');
-check('setAuthToken stores the auth_token cookie', UB.session().cookies, 'auth_token=xyzsecret');
+check('setAuthToken stores BOTH auth_token and authorization_token',
+  UB.session().cookies, 'auth_token=xyzsecret; authorization_token=xyzsecret');
+await UB.setAuthToken('authorization_token=jwtabc');
+check('setAuthToken keeps a name=value paste intact (authorization_token wins)',
+  UB.session().cookies, 'authorization_token=jwtabc');
+await UB.setAuthToken('auth_token=short');
+check('setAuthToken keeps a name=value paste intact (auth_token wins)',
+  UB.session().cookies, 'auth_token=short');
 UB.clearSession();
 check('setPlan is exposed', typeof UB.setPlan, 'function');
 UB.setAuthToken('xyzsecret');
