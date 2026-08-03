@@ -379,14 +379,22 @@ function readPlan(acct) {
   if (!acct || typeof acct !== 'object') return 'free';
   const premiumFlag = pick(acct, ['premium', 'isPremium', 'is_premium', 'isPro', 'is_pro',
     'plan.premium', 'subscription.premium', 'subscription.active', 'hasPaidSubscription', 'isPaid', 'pro']);
-  const planName = pick(acct, ['plan.name', 'plan.title', 'plan.key', 'plan.label',
-    'subscription.plan.name', 'subscription.name', 'tier.name', 'membership.name', 'license.plan.name']);
-  const planRaw = pick(acct, ['plan', 'subscription', 'tier', 'membership', 'accountStatus', 'planType']);
+  const planName = pick(acct, ['plan.name', 'plan.title', 'plan.key', 'plan.label', 'plan.slug', 'plan.type',
+    'subscription.plan.name', 'subscription.plan', 'subscription.tier', 'subscription.type', 'subscription.slug',
+    'subscription.name', 'tier.name', 'membership.name', 'license.plan.name', 'account.plan.name',
+    'currentPlan.name', 'planName', 'plan_name', 'licenseType', 'accountStatus']);
+  const planRaw = pick(acct, ['plan', 'subscription', 'tier', 'membership', 'accountStatus', 'planType',
+    'currentPlan', 'account.plan', 'account']);
 
   let plan = '';
-  const rawName = planRaw && typeof planRaw === 'object' ? (planRaw.name || planRaw.key || planRaw.title || '') : planRaw;
+  const rawName = planRaw && typeof planRaw === 'object'
+    ? (planRaw.name || planRaw.key || planRaw.title || planRaw.slug || planRaw.tier || planRaw.type || planRaw.plan || '')
+    : planRaw;
   if (typeof planName === 'string' && planName) plan = String(planName);
   else if (typeof rawName === 'string' && rawName) plan = String(rawName);
+  else if (typeof rawName === 'object' && rawName) {
+    plan = String(rawName.name || rawName.slug || rawName.tier || rawName.type || rawName.key || rawName.title || '');
+  }
 
   plan = plan.trim().toLowerCase();
   if (plan && NON_PLANS.indexOf(plan) === -1) return plan;
@@ -648,7 +656,8 @@ export const Uppbeat = {
   /** The one cookie that carries the login: give Uppbeat's `auth_token` value
       directly (copy it from Cookie Editor / DevTools) and skip the rest. */
   setAuthToken: function (token) {
-    const raw = String(token == null ? '' : token).trim();
+    const raw = String(token == null ? '' : token)
+      .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
     if (!raw) throw new Error('Paste the auth_token value first.');
     session.cookies = 'auth_token=' + raw;
     session.signedIn = true;
@@ -758,9 +767,41 @@ export const Uppbeat = {
         name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
       };
       session.plan = readPlan(acct) || 'free';
+      session.planError = null;
       session.signedIn = true;
       Uppbeat.saveSession();
       return session;
+    }, function (e) {
+      /* Don't pretend a failed account check means "free" — surface it so the
+         user can use the plan override instead of blaming the plan logic. */
+      session.plan = 'free';
+      session.planError = e.message;
+      session.signedIn = true;
+      Uppbeat.saveSession();
+      try { Paths.log('uppbeat: account check failed — ' + e.message); } catch (x) {}
+      return session;
+    });
+  },
+
+  /** Read-only diagnostic for the account/plan state, so the raw response can
+      be inspected (and pasted back when a path/session mismatch is suspected). */
+  diagnose: function () {
+    const ep = endpoints();
+    const url = ep.account.indexOf('http') === 0 ? ep.account : BASE + ep.account;
+    return httpGet(url).then(function (res) {
+      let parsed = null;
+      try { parsed = JSON.parse(res.body); } catch (e) {}
+      const acct = parsed && (parsed.user || parsed.data || parsed);
+      return {
+        endpoint: url,
+        status: res.status,
+        signedIn: !!session.cookies,
+        cookieNames: (session.cookies || '').split('; ').filter(Boolean)
+          .map(function (c) { return c.split('=')[0]; }).join(', ') || '(none)',
+        detectedPlan: readPlan(acct || {}),
+        isPremium: Uppbeat.isPremium(),
+        body: U.truncate(res.body || '', 700)
+      };
     });
   },
 

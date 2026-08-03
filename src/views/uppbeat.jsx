@@ -28,6 +28,7 @@ export function UppbeatView() {
   const [error, setError] = createSignal(null);
   const [signedIn, setSignedIn] = createSignal(false);
   const [plan, setPlan] = createSignal('free');
+  const [planError, setPlanError] = createSignal(null);
   const [busy, setBusy] = createSignal(null);      // trackId currently downloading
   const [progress, setProgress] = createSignal(0);
   const [playing, setPlaying] = createSignal(null);
@@ -39,6 +40,7 @@ export function UppbeatView() {
     const s = Uppbeat.session();
     setSignedIn(!!s.signedIn);
     setPlan(s.plan || 'free');
+    setPlanError(s.planError || null);
   }
 
   onMount(function () {
@@ -89,8 +91,13 @@ export function UppbeatView() {
       Modal.close();
       syncSession();
       const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
-      Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
-        (s.browser ? ' (via ' + s.browser + ')' : ''));
+      if (s.planError) {
+        Toast.err('Signed in — plan check failed', who + ' — ' + s.planError +
+          (s.plan === 'free' ? ' Tick "this account is paid" if this is a paid plan.' : ''));
+      } else {
+        Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
+          (s.browser ? ' (via ' + s.browser + ')' : ''));
+      }
       if (input && input.value.trim()) doSearch();
     };
 
@@ -156,6 +163,29 @@ export function UppbeatView() {
       }
     });
 
+    /* Shows exactly what the account endpoint returns, so a wrong path or a
+       session that isn't accepted is visible instead of "free". */
+    const diagnoseBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--ghost',
+      text: 'Diagnose account & plan', style: { marginTop: '6px' } });
+    diagnoseBtn.addEventListener('click', function () {
+      diagnoseBtn.disabled = true;
+      setStatus('Contacting Uppbeat…', '');
+      Uppbeat.diagnose().then(function (d) {
+        diagnoseBtn.disabled = false;
+        const head = 'Account endpoint answered HTTP ' + d.status +
+          ' · detected plan: ' + (d.detectedPlan || 'none') +
+          ' · cookies sent: ' + (d.cookieNames || 'none');
+        setStatus(head + '. Full response written to the Log tab.', d.status === 200 ? 'ok' : 'err');
+        try {
+          Paths.log('uppbeat diagnose: endpoint=' + d.endpoint + ' status=' + d.status +
+            ' cookies=' + d.cookieNames + ' plan=' + d.detectedPlan + ' body=' + d.body);
+        } catch (e) {}
+      }).catch(function (e) {
+        diagnoseBtn.disabled = false;
+        setStatus('Diagnose failed: ' + e.message, 'err');
+      });
+    });
+
     /* Pull out a real browser window (the system default) so signing in is one
        jump away, and the session can be imported straight after. */
     Uppbeat.openSignIn();
@@ -189,8 +219,9 @@ export function UppbeatView() {
           U.el('div', {}, [ manualBtn ]),
           U.el('hr', { class: 'ps2-hr' }),
           forcePlanBtn,
+          diagnoseBtn,
           U.el('div', { class: 'ps2-caption', html:
-            '<b>Plan still reads "free"?</b> If Uppbeat won\u2019t report the account level, tick the box above to manually mark it paid (Creator/Pro) so premium tracks unlock.' })
+            '<b>Plan still reads "free"?</b> If Uppbeat won\u2019t report the account level, tick the box above to manually mark it paid (Creator/Pro) so premium tracks unlock. Use <b>Diagnose</b> to see exactly what Uppbeat returns (full response is written to the Log tab).' })
         ])
       ]),
       buttons: [{ label: 'Close', run: function () { Modal.close(); } }]
@@ -409,7 +440,8 @@ export function UppbeatView() {
               when={signedIn()}
               fallback={<Badge text="not signed in" kind="mute" />}
             >
-              <Badge text={premium() ? 'premium · ' + plan() : 'free plan'} kind={premium() ? 'ok' : 'warn'} />
+              <Badge text={premium() ? 'premium · ' + plan() : 'free plan'} kind={premium() ? 'ok' : 'warn'}
+                title={planError() ? planError() : ''} />
             </Show>
 
             <Show when={!signedIn()}>
