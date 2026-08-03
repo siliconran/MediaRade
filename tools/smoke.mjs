@@ -487,6 +487,34 @@ check('a Creator account is recognised as premium (was showing free)',
   UB.isPremium(), true);
 UB.clearSession();
 
+function b64url(s) { return Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
+const creatorJwt = b64url('{"alg":"HS512"}') + '.' +
+  b64url('{"id":"1","role":["User","Creator"],"permissions":["download_premium_music","unlimited_downloads_music"]}') + '.sig';
+{
+  const beforeSpawns = shims.SPAWNED.length;
+  const res = await UB.setAuthToken(creatorJwt);
+  check('pasted Creator JWT is decoded locally WITHOUT opening Chrome',
+    shims.SPAWNED.length === beforeSpawns, true);
+  check('pasted Creator JWT sets plan from its own claims', UB.session().plan, 'creator');
+  check('pasted Creator JWT is premium', UB.isPremium(), true);
+}
+const freeJwt = b64url('{"alg":"HS512"}') + '.' +
+  b64url('{"id":"2","role":["User"],"permissions":[]}') + '.sig';
+await UB.setAuthToken(freeJwt);
+check('pasted free JWT (User only) stays free', UB.session().plan, 'free');
+UB.clearSession();
+
+const stale = JSON.stringify({ cookies: 'auth_token=' + creatorJwt + '; authorization_token=' + creatorJwt,
+  token: 'true', plan: 'free', signedIn: true, importedAt: 1 });
+shims.FILES['C:\\Users\\dev\\Documents\\MediaRade\\config.json'] = JSON.stringify(
+  Object.assign(JSON.parse(shims.FILES['C:\\Users\\dev\\Documents\\MediaRade\\config.json']),
+    { uppbeatSession: JSON.parse(stale) }));
+MR.Config.load();
+MR.Uppbeat.loadSession();
+check('loadSession re-derives plan from a stored JWT even when config says free',
+  MR.Uppbeat.session().plan, 'creator');
+UB.clearSession();
+
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',
   description: 'Shot on my own camera.', license: 'Creative Commons Attribution license (reuse allowed)',
