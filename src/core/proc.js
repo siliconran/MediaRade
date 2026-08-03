@@ -18,6 +18,8 @@ function untrack(child) {
  * @param {string[]} args
  * @param {object}   opts
  *   onStdout(line)  onStderr(line)  cwd  timeout(ms)  maxBuffer(chars)
+ *   stdin(string)   optional data written to the child's stdin at launch
+ *                   (used for secrets, so they never appear in argv).
  * @returns {Promise<{code, stdout, stderr, killed}>} with a .cancel() attached
  */
 function run(exe, args, opts) {
@@ -37,6 +39,14 @@ function run(exe, args, opts) {
     }
 
     live.push(child);
+
+    if (opts.stdin != null) {
+      try {
+        child.stdin.on('error', function () {});
+        child.stdin.write(String(opts.stdin));
+        child.stdin.end();
+      } catch (e) {}
+    }
 
     let out = '', err = '', outBuf = '', errBuf = '';
     const cap = opts.maxBuffer || 6e6;
