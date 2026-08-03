@@ -426,26 +426,45 @@ body.is-dragging-media #app { opacity: 0.82; transition: opacity var(--ps2-dur-f
 /* =============================================================================
    log view
    ========================================================================== */
-.mr-logview .mr-view__toolbar {
-  flex-wrap: wrap;
+.mr-logview { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.mr-logview__toolbar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
   gap: var(--ps2-space-2);
-  align-items: center;
-  margin-bottom: var(--ps2-space-2);
+  padding: var(--ps2-space-2) var(--ps2-space-3);
+  border-bottom: 1px solid var(--ps2-line);
+  background: rgba(0,0,0,0.28);
 }
-.mr-logview .mr-view__toolbar .mr-logview__path {
+.mr-logview__row {
+  display: flex;
+  align-items: center;
+  gap: var(--ps2-space-2);
+  min-width: 0;
+}
+.mr-logview__row .ps2-caption,
+.mr-logview__row .mr-filters__label { flex: 0 0 auto; white-space: nowrap; }
+.mr-logview__path {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mr-logview__toolbar { min-width: 0; }
-.mr-logview__toolbar .ps2-btn,
-.mr-logview__toolbar .ps2-chip,
-.mr-logview__toolbar .mr-filters__label,
-.mr-logview__toolbar .mr-logview__path { flex: 0 0 auto; }
-.mr-logview__toolbar input.ps2-input { flex: 1 1 160px !important; min-width: 90px; }
-.mr-logview__toolbar .ps2-panel__spacer { flex: 1 1 12px; }
+.mr-logview__stamp { flex: 0 0 auto; }
+.mr-logview__filter { flex: 1 1 160px; min-width: 80px; padding: 4px 8px; }
+.mr-logview__row .ps2-btn,
+.mr-logview__row .ps2-chip { flex: 0 0 auto; }
+.mr-logview__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--ps2-space-2) var(--ps2-space-3) 0;
+  overflow: hidden;
+}
+.mr-logview__body .mr-log { min-height: 0; }
+.mr-logview__foot { flex: none; padding: 6px 0 4px; text-align: center; }
 
 /* =============================================================================
    download options

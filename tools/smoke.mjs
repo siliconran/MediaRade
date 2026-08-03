@@ -11,6 +11,7 @@
 
    ========================================================================== */
 import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -118,7 +119,22 @@ function makeShims(win) {
     path, fs,
     os: { homedir: () => 'C:\\Users\\dev', platform: () => 'win32' },
     child_process: { spawn: (exe, args) => fakeChild(args) },
-    https: { get: () => ({ on() {}, destroy() {} }) },
+    https: {
+      get: (opts, cb) => {
+        /* Respond to the Uppbeat account check like the live API would — a
+           Creator account with the plan nested under subscription.plan. */
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        res.headers = { 'content-length': '2' };
+        res.setEncoding = () => {};
+        cb(res);
+        const body = JSON.stringify({
+          user: { email: 'pro@uppbeat.fake', name: 'Pro User', subscription: { plan: 'creator' } }
+        });
+        setTimeout(() => { res.emit('data', body); res.emit('end'); }, 1);
+        return { on() {}, destroy() {} };
+      }
+    },
     url: { parse: (u) => { const x = new URL(u); return { protocol: x.protocol, hostname: x.hostname, path: x.pathname + x.search }; } }
   };
 
@@ -428,6 +444,12 @@ check('setPlan forces a paid plan', UB.isPremium(), true);
 UB.setPlan('redetect');
 check('setPlan redetect keeps signed-in premium path even if /me is unreachable',
   typeof UB.session().cookies, 'string');
+UB.clearSession();
+check('diagnose is exposed for the sign-in popup', typeof UB.diagnose, 'function');
+await UB.setAuthToken('xyzsecret');
+check('auth_token re-checks the plan against the account endpoint', UB.session().plan, 'creator');
+check('a Creator account is recognised as premium (was showing free)',
+  UB.isPremium(), true);
 UB.clearSession();
 
 section('browse cards');
