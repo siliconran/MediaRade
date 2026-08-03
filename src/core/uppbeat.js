@@ -38,14 +38,21 @@ import Proc from './proc.js';
 import YtDlp from './ytdlp.js';
 
 const BASE = 'https://uppbeat.io';
+/* The rebuilt (uppbeat-next) SPA serves its API from this origin, which is NOT
+   behind the Vercel Security Checkpoint — plain Node reaches it directly. The
+   account/plan state lives in /api/setup_frontend (top-level `auth_token`,
+   `user`, `subscriptionData`). Search is a client-side Typesense multi-search. */
+const API_BASE = 'https://prod-api.uppbeat.io';
+const TYPESENSE_BASE = 'https://3feynu8vjgbqkl27p.a1.typesense.net';
+const TYPESENSE_KEY = 'MqZdBn4VL8k7IqhuMKOSNuBxmU0isNLk';
 
 /* Undocumented endpoints, overridable from Setup. `{q}`, `{id}`, `{page}` are
    substituted. Kept in one place so a site change is a settings edit. */
 export const DEFAULT_ENDPOINTS = {
   search: '/api/v1/search/tracks?query={q}&page={page}&limit={limit}',
-  track: '/api/v1/tracks/{id}',
-  account: '/api/v1/me',
-  download: '/api/v1/tracks/{id}/download'
+  track: '/api/v1/track/{id}',
+  account: '/api/setup_frontend',
+  download: '/api/musicvine/license/{id}'
 };
 
 /* Empty string = yt-dlp is told the profile folder "behind" `firefox`-family
@@ -154,7 +161,7 @@ export { browserInstalled, foxRoot, cookiesArg };
 
 /* --- session ------------------------------------------------------------- */
 
-let session = { cookies: '', account: null, plan: 'free', signedIn: false, importedAt: null };
+let session = { cookies: '', token: '', account: null, plan: 'free', signedIn: false, importedAt: null };
 
 function endpoints() {
   const custom = Config.get('uppbeatEndpoints');
@@ -191,19 +198,17 @@ function sessionHeaders(extra) {
     h.Cookie = session.cookies;
     const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
     if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
-    /* Uppbeat may read the session from EITHER the `authorization_token` or
-       `auth_token` cookie, and may want it as a Bearer header instead of a
-       cookie. Cover all of them with whichever token we have, so "either one
-       works" — the right one is used by the server, the rest are ignored. */
-    const tok = session.cookies.match(/(?:^|;\s*)(authorization_token|auth_token)=([^;]+)/i);
-    if (tok) {
-      let v = tok[2].trim();
-      try { v = decodeURIComponent(v); } catch (e) {}
-      if (v) {
-        if (tok[1].toLowerCase() === 'authorization_token') h['Authorization'] = 'Bearer ' + v;
-        h['X-Authorization-Token'] = v;
-        h['X-Auth-Token'] = v;
-      }
+    /* The rebuilt SPA authenticates to prod-api with an `auth_token` string
+       returned by /api/setup_frontend, sent as the X-Auth-Token header. Prefer
+       that token; fall back to whichever session cookie Uppbeat set. */
+    const tok = (session.token || '').trim() ||
+      (session.cookies.match(/(?:^|;\s*)(authorization_token|auth_token)=([^;]+)/i) || [])[2] || '';
+    let v = String(tok).trim();
+    try { v = decodeURIComponent(v); } catch (e) {}
+    if (v) {
+      h['Authorization'] = 'Bearer ' + v;
+      h['X-Authorization-Token'] = v;
+      h['X-Auth-Token'] = v;
     }
   }
   return h;
@@ -221,7 +226,10 @@ function httpGet(url, opts) {
     catch (e) { return reject(new Error('Node is unavailable in this panel, so Uppbeat cannot be reached.')); }
 
     const parsed = urlmod.parse(url);
-    const headers = sessionHeaders({ 'Accept': opts.accept || 'application/json, text/plain, */*' });
+    const headers = sessionHeaders(Object.assign(
+      { 'Accept': opts.accept || 'application/json, text/plain, */*' },
+      opts.headers || {}
+    ));
 
     const req = https.get({
       protocol: parsed.protocol,
@@ -355,19 +363,21 @@ function normalizeTrack(t) {
     title: String(pick(t, ['title', 'name']) || 'Untitled'),
     artist: String(artist),
     artistSlug: pick(t, ['artist.slug', 'artistSlug']),
-    duration: Number(pick(t, ['duration', 'length', 'durationSeconds'])) || null,
+    duration: Number(pick(t, ['duration', 'length', 'durationSeconds', 'version_length', 'versionLength'])) || null,
     bpm: pick(t, ['bpm', 'tempo']),
-    genres: [].concat(pick(t, ['genres', 'genre']) || []).map(function (g) {
+    genres: [].concat(pick(t, ['genres', 'genre', 'styles']) || []).map(function (g) {
       return typeof g === 'string' ? g : (g && (g.name || g.title)) || '';
     }).filter(Boolean),
-    moods: [].concat(pick(t, ['moods', 'mood']) || []).map(function (m) {
+    moods: [].concat(pick(t, ['moods', 'mood', 'tags']) || []).map(function (m) {
       return typeof m === 'string' ? m : (m && (m.name || m.title)) || '';
     }).filter(Boolean),
     premium: !!(pick(t, ['isPremium', 'premium', 'requiresSubscription', 'is_premium',
                          'premiumTrack', 'premiumTier', 'license.isPremium'])) &&
       !pick(t, ['isFree', 'free', 'freeTrack', 'is_free']),
-    preview: pick(t, ['previewUrl', 'preview', 'audioUrl', 'mp3', 'streamUrl', 'file.preview']),
+    preview: pick(t, ['previewUrl', 'preview', 'audioUrl', 'mp3', 'streamUrl', 'file.preview',
+                      'version_preview_uri', 'versionPreviewUri']),
     artwork: pick(t, ['artwork', 'image', 'imageUrl', 'artist.image', 'cover']),
+    musicvineTrackId: pick(t, ['musicvine_track_id', 'musicvineTrackId']),
     page: slug ? (String(slug).indexOf('http') === 0 ? String(slug) : BASE + '/track/' + slug) : BASE,
     raw: t
   };
@@ -398,13 +408,17 @@ function truthy(v) { return v === true || v === 1 || v === 'true' || v === '1' |
 function readPlan(acct) {
   if (!acct || typeof acct !== 'object') return 'free';
   const premiumFlag = pick(acct, ['premium', 'isPremium', 'is_premium', 'isPro', 'is_pro',
-    'plan.premium', 'subscription.premium', 'subscription.active', 'hasPaidSubscription', 'isPaid', 'pro']);
+    'plan.premium', 'subscription.premium', 'subscription.active', 'hasPaidSubscription', 'isPaid', 'pro',
+    'subscriptionData.isActive', 'subscriptionData.is_active', 'subscriptionData.active',
+    'subscriptionData.isPaid', 'subscriptionData.premium']);
   const planName = pick(acct, ['plan.name', 'plan.title', 'plan.key', 'plan.label', 'plan.slug', 'plan.type',
     'subscription.plan.name', 'subscription.plan', 'subscription.tier', 'subscription.type', 'subscription.slug',
-    'subscription.name', 'tier.name', 'membership.name', 'license.plan.name', 'account.plan.name',
+    'subscription.name', 'subscriptionData.plan.name', 'subscriptionData.plan', 'subscriptionData.tier',
+    'subscriptionData.type', 'subscriptionData.name', 'subscriptionData.product', 'subscriptionData.subscriptionName',
+    'tier.name', 'membership.name', 'license.plan.name', 'account.plan.name',
     'currentPlan.name', 'planName', 'plan_name', 'licenseType', 'accountStatus']);
   const planRaw = pick(acct, ['plan', 'subscription', 'tier', 'membership', 'accountStatus', 'planType',
-    'currentPlan', 'account.plan', 'account']);
+    'currentPlan', 'account.plan', 'account', 'subscriptionData']);
 
   let plan = '';
   const rawName = planRaw && typeof planRaw === 'object'
@@ -439,7 +453,7 @@ export const Uppbeat = {
   loadSession: function () {
     const stored = Config.get('uppbeatSession');
     if (stored && stored.cookies) {
-      session = Object.assign({ plan: 'free', signedIn: true }, stored);
+      session = Object.assign({ plan: 'free', signedIn: true, token: '' }, stored);
     }
     return session;
   },
@@ -447,6 +461,7 @@ export const Uppbeat = {
   saveSession: function () {
     Config.set('uppbeatSession', {
       cookies: session.cookies,
+      token: session.token,
       account: session.account,
       plan: session.plan,
       signedIn: session.signedIn,
@@ -457,7 +472,7 @@ export const Uppbeat = {
   },
 
   clearSession: function () {
-    session = { cookies: '', account: null, plan: 'free', signedIn: false, importedAt: null };
+    session = { cookies: '', token: '', account: null, plan: 'free', signedIn: false, importedAt: null };
     Uppbeat.saveSession();
     return session;
   },
@@ -758,6 +773,7 @@ export const Uppbeat = {
         }
         const acct = out.me && (out.me.user || out.me.data || out.me);
         session.cookies = out.cookies || '';
+        session.token = String(out.me && (out.me.auth_token || out.me.token) || '').trim();
         session.account = acct ? {
           email: pick(acct, ['email', 'user.email']),
           name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
@@ -799,6 +815,7 @@ export const Uppbeat = {
           throw new Error(err);
         }
         const acct = out.me && (out.me.user || out.me.data || out.me);
+        session.token = String(out.me && (out.me.auth_token || out.me.token) || '').trim();
         if (acct) {
           session.account = {
             email: pick(acct, ['email', 'user.email']),
@@ -898,7 +915,7 @@ export const Uppbeat = {
 
   json: function (path, what, _attempt) {
     _attempt = _attempt || 0;
-    const url = path.indexOf('http') === 0 ? path : BASE + path;
+    const url = path.indexOf('http') === 0 ? path : API_BASE + path;
     return httpGet(url).then(function (res) {
       /* 429 is an IP-level limit at Uppbeat's edge (Vercel) — retrying just
          feeds it and extends the window. Only auto-retry transient 5xx. */
@@ -920,11 +937,19 @@ export const Uppbeat = {
   /** Account + plan. Used to decide whether the credit banner is mandatory. */
   me: function () {
     return Uppbeat.json(endpoints().account, 'account').then(function (json) {
+      /* setup_frontend nests the real account under `user` only when
+         authenticated; otherwise it is `{ is_authenticated: false }`. */
       const acct = json && (json.user || json.data || json);
+      const authed = acct && (acct.is_authenticated || acct.email || acct.id);
+      if (!authed) {
+        const e = new Error('Not signed in — the session cookie is missing or expired.');
+        throw e;
+      }
       session.account = {
         email: pick(acct, ['email', 'user.email']),
         name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
       };
+      session.token = String(json && (json.auth_token || json.token) || '').trim();
       session.plan = readPlan(acct) || 'free';
       session.planError = null;
       session.signedIn = true;
@@ -946,7 +971,7 @@ export const Uppbeat = {
       be inspected (and pasted back when a path/session mismatch is suspected). */
   diagnose: function () {
     const ep = endpoints();
-    const url = ep.account.indexOf('http') === 0 ? ep.account : BASE + ep.account;
+    const url = ep.account.indexOf('http') === 0 ? ep.account : API_BASE + ep.account;
     return httpGet(url).then(function (res) {
       let parsed = null;
       try { parsed = JSON.parse(res.body); } catch (e) {}
@@ -968,23 +993,30 @@ export const Uppbeat = {
 
   /**
    * Search the catalogue.
+   * The rebuilt SPA searches a Typesense cluster client-side; we mirror that
+   * with the same public key + collection ("tracks", query_by "name").
    * @param {string} query
    * @param {object} opts { page, limit, genre, mood }
    */
   search: function (query, opts) {
     opts = opts || {};
-    const ep = endpoints();
-    let path = fill(ep.search, {
-      q: query || '',
-      page: opts.page || 1,
-      limit: opts.limit || Config.get('uppbeatResultCount') || 30
-    });
-    if (opts.genre) path += '&genre=' + encodeURIComponent(opts.genre);
-    if (opts.mood) path += '&mood=' + encodeURIComponent(opts.mood);
+    const limit = opts.limit || Config.get('uppbeatResultCount') || 30;
+    const q = String(query || '').trim();
+    const url = TYPESENSE_BASE + '/collections/tracks/documents/search?q=' +
+      encodeURIComponent(q) +
+      '&query_by=' + encodeURIComponent('name') +
+      '&page=' + (opts.page || 1) +
+      '&per_page=' + limit;
 
-    return Uppbeat.json(path, 'search').then(function (json) {
-      const tracks = extractTracks(json);
-      if (!tracks.length && !Array.isArray(json)) {
+    return httpGet(url, {
+      headers: { 'x-typesense-api-key': TYPESENSE_KEY, 'Origin': BASE, 'Referer': BASE + '/' }
+    }).then(function (res) {
+      if (res.status !== 200) throw new Error(explainStatus(res.status, 'search', res));
+      let json;
+      try { json = JSON.parse(res.body); } catch (e) { json = null; }
+      const docs = (json && json.hits || []).map(function (h) { return h.document; });
+      const tracks = docs.map(normalizeTrack).filter(Boolean);
+      if (!tracks.length && docs.length) {
         Paths.log('uppbeat: search returned an unrecognised shape — ' + U.truncate(JSON.stringify(json), 400));
       }
       return tracks;
@@ -998,12 +1030,15 @@ export const Uppbeat = {
   },
 
   /**
-   * Resolve the actual audio URL for a track. Uppbeat gates this on the
-   * account's plan, so a 402/403 here is the plan talking, not a bug.
+   * Resolve the actual audio URL for a track. The rebuilt SPA calls
+   * /api/musicvine/license/{musicvine_track_id} and reads `data.link`.
+   * Uppbeat gates this on the account's plan, so a 402/403 here is the plan
+   * talking, not a bug.
    */
   resolveDownload: function (track) {
-    return Uppbeat.json(fill(endpoints().download, { id: track.id }), 'download').then(function (json) {
-      const url = pick(json, ['url', 'downloadUrl', 'download_url', 'data.url', 'file', 'signedUrl']);
+    const id = track.musicvineTrackId || track.musicvine_track_id || track.id;
+    return Uppbeat.json(fill(endpoints().download, { id: id }), 'download').then(function (json) {
+      const url = pick(json, ['data.link', 'link', 'url', 'downloadUrl', 'download_url', 'file', 'signedUrl']);
       if (!url) throw new Error('Uppbeat did not return a download URL for this track. Your plan may not cover it.');
       return String(url);
     });
