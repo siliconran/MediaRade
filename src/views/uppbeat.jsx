@@ -173,11 +173,13 @@ export function UppbeatView() {
       Uppbeat.diagnose().then(function (d) {
         diagnoseBtn.disabled = false;
         const head = 'Account endpoint answered HTTP ' + d.status +
+          (d.server ? ' (' + d.server + ')' : '') +
           ' · detected plan: ' + (d.detectedPlan || 'none') +
           ' · cookies sent: ' + (d.cookieNames || 'none');
         setStatus(head + '. Full response written to the Log tab.', d.status === 200 ? 'ok' : 'err');
         try {
           Paths.log('uppbeat diagnose: endpoint=' + d.endpoint + ' status=' + d.status +
+            ' server=' + d.server + ' retry-after=' + (d.retryAfter || 'none') +
             ' cookies=' + d.cookieNames + ' plan=' + d.detectedPlan + ' body=' + d.body);
         } catch (e) {}
       }).catch(function (e) {
@@ -242,6 +244,15 @@ export function UppbeatView() {
     syncSession();
     setResults([]);
     Toast.info('Signed out', 'The stored Uppbeat session was cleared.');
+  }
+
+  function checkPlan() {
+    Uppbeat.me().then(function (s) {
+      syncSession();
+      if (s.planError) Toast.err('Plan check failed', s.planError);
+      else Toast.ok('Plan checked', 'account: ' + (s.plan || 'free') +
+        ' · premium ' + (Uppbeat.isPremium() ? 'ON' : 'off'));
+    });
   }
 
   /* --- search -------------------------------------------------------------- */
@@ -453,6 +464,8 @@ export function UppbeatView() {
             <Show when={signedIn()}>
               <Btn size="sm" label="Refresh" title="Re-import the session and re-check your plan"
                 onClick={refreshSession} />
+              <Btn size="sm" variant="ghost" label="Check plan" title="Re-run the account/plan check now (use after a rate-limit reset)"
+                onClick={checkPlan} />
               <Btn size="sm" variant="ghost" label="Sign out" onClick={signOut} />
             </Show>
           </div>
