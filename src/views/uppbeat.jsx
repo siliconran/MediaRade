@@ -280,7 +280,7 @@ export function UppbeatView() {
   }
 
   function checkPlan() {
-    Uppbeat.me().then(function (s) {
+    Uppbeat.refreshPlan().then(function (s) {
       syncSession();
       if (s.planError) Toast.err('Plan check failed', s.planError);
       else Toast.ok('Plan checked', 'account: ' + (s.plan || 'free') +

@@ -465,6 +465,22 @@ check('findNode/helperPath are exposed', typeof UB.findNode, 'function' && typeo
 }
 check('login helper ships with the repo',
   existsSync(join(ROOT, 'tools', 'uppbeat-login.mjs')), true);
+{
+  const beforeSpawns = shims.SPAWNED.length;
+  await UB.verifyInBrowser().catch(() => {});   // no cookies -> must reject without spawning
+  check('verifyInBrowser rejects without a session WITHOUT spawning a process',
+    shims.SPAWNED.length === beforeSpawns, true);
+}
+check('refreshPlan is exposed for browser-first plan checks', typeof UB.refreshPlan, 'function');
+{
+  const beforeSpawns = shims.SPAWNED.length;
+  await UB.refreshPlan();                        // browser verify unavailable -> falls back to /me mock
+  check('refreshPlan falls back to the account endpoint when the browser verify is unavailable',
+    UB.session().plan, 'creator');
+  check('refreshPlan fallback clears the plan error', UB.session().planError, null);
+  check('refreshPlan falls back WITHOUT extra process spawns',
+    shims.SPAWNED.length === beforeSpawns, true);
+}
 await UB.setAuthToken('xyzsecret');
 check('auth_token re-checks the plan against the account endpoint', UB.session().plan, 'creator');
 check('a Creator account is recognised as premium (was showing free)',
