@@ -37,7 +37,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const LOGIN_URL = 'https://uppbeat.io/login';
-const ACCOUNT_PATH = '/api/v1/me';
+const API_BASE = 'https://prod-api.uppbeat.io';
+/* The rebuilt SPA serves account/plan state from /api/setup_frontend. A real
+   browser shares the .uppbeat.io session cookies with the prod-api subdomain,
+   so a plain credentials:'include' fetch is authenticated. The body (not the
+   HTTP status) tells us whether the session is valid: `auth_token` truthy +
+   `user.is_authenticated` = signed in. */
+const ACCOUNT_PATH = API_BASE + '/api/setup_frontend?fev=uppbeat-next@1.1.18';
 
 const CHROME_CANDIDATES = [
   process.env.MR_CHROME,
@@ -193,9 +199,10 @@ const ME_JS = `(async () => {
     const r = await fetch(${JSON.stringify(ACCOUNT_PATH)}, { credentials: 'include', headers: { 'Accept': 'application/json' } });
     let json = null;
     try { json = await r.json(); } catch (e) {}
-    return { status: r.status, json: json };
+    const signedIn = !!(json && (json.auth_token || (json.user && json.user.is_authenticated)));
+    return { status: r.status, signedIn: signedIn, json: json };
   } catch (e) {
-    return { status: 0, json: null };
+    return { status: 0, json: null, signedIn: false };
   }
 })()`;
 
@@ -280,18 +287,388 @@ async function runVerify() {
 
     await cdp.send('Page.navigate', { url: 'https://uppbeat.io/' }, pageSession);
 
-    /* Let Chrome pass the checkpoint, then ask /api/v1/me. */
-    let me = { status: 0, json: null };
+    /* Let Chrome pass the checkpoint, then ask prod-api setup_frontend. */
+    let me = { status: 0, json: null, signedIn: false };
     for (;;) {
       if (Date.now() - startedAt > remaining) break;
       me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0 };
-      if (me.status === 200 || me.status === 401) break;
+      if (me.signedIn || me.status === 401) break;
       await sleep(700);
     }
     if (me.status === 401) throw new Error('These cookies no longer log in — re-sign-in at uppbeat.io.');
-    if (me.status !== 200) throw new Error('Could not reach the account endpoint from Chrome (HTTP ' + me.status + '). Check the Chrome window, then try again.');
+    if (!me.signedIn) throw new Error('These cookies no longer log in — re-sign-in at uppbeat.io (setup_frontend did not authenticate).');
 
     process.stdout.write(JSON.stringify({ ok: true, me: me.json }) + '\n');
+    return 0;
+  } catch (e) {
+    process.stdout.write(JSON.stringify({ ok: false, error: (e && e.message) || 'Unknown error' }) + '\n');
+    return 1;
+  } finally {
+    try { if (cdp) await cdp.send('Browser.close'); } catch (e) {}
+    try { if (ws) ws.close(); } catch (e) {}
+    try { if (child && typeof child.pid === 'number') spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' }); } catch (e) {}
+    await sleep(600);
+    try { rmSync(userDataDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 300 }); } catch (e) {}
+  }
+}
+
+/* --- --probe mode ----------------------------------------------------------
+   Discover the current Uppbeat API paths. Chrome passes the Vercel checkpoint
+   (so we see real status codes, not 429s), then we fetch a list of candidate
+   URLs same-origin and report each one's status + a snippet. Used when the
+   panel reports 404 on a hardcoded endpoint.
+
+   Usage:  echo '{"cookies":"...","urls":["https://uppbeat.io/api/...",...]}'
+             | node uppbeat-login.mjs --probe [--timeout 60000]
+   Prints { ok:true, results:[{url,status,snippet,html}] } or { ok:false,... }.
+   ======================================================================== */
+
+async function runProbe() {
+  const args = process.argv.slice(2);
+  const timeoutMs = parseInt(args[args.indexOf('--timeout') + 1], 10) || 60000;
+
+  const spec = await new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c) => { data += c; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.resume();
+  });
+  let input = null;
+  try { input = JSON.parse(spec || '{}'); } catch (e) { input = null; }
+  const urls = (input && input.urls) || [];
+  if (!urls.length) {
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No URLs to probe — send {"urls":[...]} on STDIN.' }) + '\n');
+    return 1;
+  }
+  const pairs = String((input && input.cookies) || '')
+    .split(/[;\r\n]+/).map((s) => s.trim()).filter(Boolean)
+    .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
+    .filter((p) => p && p.name && p.value);
+
+  const chromePath = findChrome();
+  if (!chromePath) {
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to probe with.' }) + '\n');
+    return 1;
+  }
+
+  const startedAt = Date.now();
+  const remaining = Math.max(30000, timeoutMs);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), 'mrupbeat-'));
+  let child = null, ws = null, cdp = null, pageSession = null;
+
+  try {
+    child = spawn(chromePath, [
+      '--user-data-dir=' + userDataDir,
+      '--remote-debugging-port=0',
+      '--remote-allow-origins=*',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-popup-blocking',
+      '--disable-blink-features=AutomationControlled',
+      'about:blank'
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', () => {});
+    child.on('error', () => {});
+
+    const wsUrl = await waitForDebugger(userDataDir, Math.min(remaining, 40000));
+    if (Date.now() - startedAt > remaining) throw new Error('Timed out while Chrome was starting.');
+
+    ws = await connectWS(wsUrl, 15000);
+    cdp = new CDP(ws);
+
+    const created = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const attached = await cdp.send('Target.attachToTarget', { targetId: created.targetId, flatten: true });
+    pageSession = attached.sessionId;
+
+    await cdp.send('Runtime.enable', {}, pageSession);
+    await cdp.send('Page.enable', {}, pageSession);
+    await cdp.send('Network.enable', {}, pageSession);
+
+    for (const p of pairs) {
+      for (const url of ['https://uppbeat.io', 'https://www.uppbeat.io']) {
+        await cdp.send('Network.setCookie', { name: p.name, value: p.value, url, path: '/' }, pageSession).catch(() => {});
+      }
+    }
+    await cdp.send('Page.navigate', { url: 'https://uppbeat.io/' }, pageSession);
+
+    /* Let the checkpoint clear first. */
+    for (;;) {
+      if (Date.now() - startedAt > remaining) break;
+      const s = (await evaluate(cdp, pageSession,
+        `(() => { try { return !!document.querySelector('form, nav, header'); } catch (e) { return false; } })()`).catch(() => null));
+      if (s) break;
+      await sleep(500);
+    }
+
+    const PROBE_JS = `(async (url) => {
+      try {
+        const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest' } });
+        const text = await r.text();
+        const html = /^\\s*<\\/?[a-z!]/i.test(text);
+        const snippet = html ? String(text).replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 200) : String(text).slice(0, 300);
+        return { status: r.status, html: html, snippet: snippet };
+      } catch (e) {
+        return { status: 0, html: false, snippet: String(e && e.message || 'network error').slice(0, 200) };
+      }
+    })(${JSON.stringify('URLPLACE')})`;
+
+    const results = [];
+    for (const u of urls) {
+      if (Date.now() - startedAt > remaining) break;
+      const r = (await evaluate(cdp, pageSession, PROBE_JS.replace('URLPLACE', u.replace(/"/g, '\\"'))).catch(() => null)) ||
+        { status: 0, html: false, snippet: 'eval failed' };
+      results.push({ url: u, status: r.status, html: !!r.html, snippet: r.snippet });
+      await sleep(250);
+    }
+
+    process.stdout.write(JSON.stringify({ ok: true, results: results }) + '\n');
+    return 0;
+  } catch (e) {
+    process.stdout.write(JSON.stringify({ ok: false, error: (e && e.message) || 'Unknown error' }) + '\n');
+    return 1;
+  } finally {
+    try { if (cdp) await cdp.send('Browser.close'); } catch (e) {}
+    try { if (ws) ws.close(); } catch (e) {}
+    try { if (child && typeof child.pid === 'number') spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' }); } catch (e) {}
+    await sleep(600);
+    try { rmSync(userDataDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 300 }); } catch (e) {}
+  }
+}
+
+/* --- --capture mode --------------------------------------------------------
+   Watch a page load and print the API-looking requests the SPA actually makes,
+   with their response codes. This reveals the real API origin when hardcoded
+   endpoints 404 (the site moved hosts/paths).
+
+   Usage:  echo '<cookies>' | node uppbeat-login.mjs --capture <url> [--timeout 40000]
+   Prints { ok:true, requests:[{url,status,type}] }.
+   ======================================================================== */
+
+async function runCapture() {
+  const args = process.argv.slice(2);
+  const url = args[args.indexOf('--capture') + 1] || 'https://uppbeat.io/';
+  const timeoutMs = parseInt(args[args.indexOf('--timeout') + 1], 10) || 40000;
+
+  const cookiesText = await new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c) => { data += c; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.resume();
+  });
+  const pairs = String(cookiesText || '')
+    .split(/[;\r\n]+/).map((s) => s.trim()).filter(Boolean)
+    .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
+    .filter((p) => p && p.name && p.value);
+
+  const chromePath = findChrome();
+  if (!chromePath) {
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to capture with.' }) + '\n');
+    return 1;
+  }
+
+  const startedAt = Date.now();
+  const remaining = Math.max(20000, timeoutMs);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), 'mrupbeat-'));
+  let child = null, ws = null, cdp = null, pageSession = null;
+  const seen = new Map();
+  const apiRe = /(api|graphql|graph|me|account|user|track|search|download|session|login|cookie|token|csrf)/i;
+
+  try {
+    const captured = { requests: [] };
+    child = spawn(chromePath, [
+      '--user-data-dir=' + userDataDir,
+      '--remote-debugging-port=0',
+      '--remote-allow-origins=*',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-popup-blocking',
+      '--disable-blink-features=AutomationControlled',
+      'about:blank'
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', () => {});
+    child.on('error', () => {});
+
+    const wsUrl = await waitForDebugger(userDataDir, Math.min(remaining, 40000));
+    if (Date.now() - startedAt > remaining) throw new Error('Timed out while Chrome was starting.');
+
+    ws = await connectWS(wsUrl, 15000);
+    cdp = new CDP(ws);
+
+    const created = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const attached = await cdp.send('Target.attachToTarget', { targetId: created.targetId, flatten: true });
+    pageSession = attached.sessionId;
+
+    await cdp.send('Runtime.enable', {}, pageSession);
+    await cdp.send('Page.enable', {}, pageSession);
+    await cdp.send('Network.enable', {}, pageSession);
+
+    cdp.ws.addEventListener('message', (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || m.sessionId !== pageSession) return;
+      const method = m.method || '';
+      const p = (m.params || {}).request || {};
+      const reqUrl = p.url || '';
+      if (method === 'Network.requestWillBeSent' && apiRe.test(reqUrl) && !/[./](css|js|png|jpg|jpeg|webp|svg|ico|woff2?|ttf|avif|gif)(\?|$)/.test(reqUrl)) {
+        if (!seen.has(reqUrl)) {
+          seen.set(reqUrl, 1);
+          captured.requests.push({
+            url: reqUrl,
+            method: p.method || 'GET',
+            type: (p.initiator && p.initiator.type) || 'xhr',
+            apiKey: (p.headers && p.headers['x-typesense-api-key']) || '',
+            post: String(p.postData || '').slice(0, 1200)
+          });
+        }
+      } else if (method === 'Network.responseReceived' && apiRe.test(reqUrl) && !/[./](css|js|png|jpg|jpeg|webp|svg|ico|woff2?|ttf|avif)(\?|$)/.test(reqUrl)) {
+        const r = m.params.response || {};
+        const hit = captured.requests.find((c) => c.url === reqUrl);
+        if (hit) hit.status = r.status;
+      }
+    });
+
+    for (const p of pairs) {
+      for (const u of ['https://uppbeat.io', 'https://www.uppbeat.io']) {
+        await cdp.send('Network.setCookie', { name: p.name, value: p.value, url: u, path: '/' }, pageSession).catch(() => {});
+      }
+    }
+    await cdp.send('Page.navigate', { url: url }, pageSession);
+
+    /* Wait briefly, capturing any API traffic the SPA issues. */
+    const t0 = Date.now();
+    while (Date.now() - t0 < 8000) {
+      if (Date.now() - startedAt > remaining) break;
+      await sleep(500);
+    }
+
+    process.stdout.write(JSON.stringify({ ok: true, requests: captured }) + '\n');
+    return 0;
+  } catch (e) {
+    process.stdout.write(JSON.stringify({ ok: false, error: (e && e.message) || 'Unknown error' }) + '\n');
+    return 1;
+  } finally {
+    try { if (cdp) await cdp.send('Browser.close'); } catch (e) {}
+    try { if (ws) ws.close(); } catch (e) {}
+    try { if (child && typeof child.pid === 'number') spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { stdio: 'ignore' }); } catch (e) {}
+    await sleep(600);
+    try { rmSync(userDataDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 300 }); } catch (e) {}
+  }
+}
+
+/* --- --whoami mode ---------------------------------------------------------
+   After loading uppbeat.io with a candidate session, report whether the site
+   recognises it as logged in and what cookie/localStorage names are in play.
+   This tells us whether an imported session is stale (site rebuilt) vs valid.
+
+   Usage:  echo '<cookies>' | node uppbeat-login.mjs --whoami [--timeout 40000]
+   Prints { ok:true, whoami:{...} }.
+   ======================================================================== */
+
+async function runWhoami() {
+  const args = process.argv.slice(2);
+  const timeoutMs = parseInt(args[args.indexOf('--timeout') + 1], 10) || 40000;
+
+  const cookiesText = await new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c) => { data += c; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.resume();
+  });
+  const pairs = String(cookiesText || '')
+    .split(/[;\r\n]+/).map((s) => s.trim()).filter(Boolean)
+    .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
+    .filter((p) => p && p.name && p.value);
+
+  const chromePath = findChrome();
+  if (!chromePath) {
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found.' }) + '\n');
+    return 1;
+  }
+
+  const startedAt = Date.now();
+  const remaining = Math.max(20000, timeoutMs);
+  const userDataDir = mkdtempSync(path.join(tmpdir(), 'mrupbeat-'));
+  let child = null, ws = null, cdp = null, pageSession = null;
+
+  const WHOAMI_JS = `(() => {
+    const ck = {};
+    try { (document.cookie || '').split(';').forEach(function (s) { const i = s.indexOf('='); if (i > 0) ck[s.slice(0, i).trim()] = 1; }); } catch (e) {}
+    const ls = {};
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = 1; } } catch (e) {}
+    let nd = null;
+    try { const el = document.getElementById('__NEXT_DATA__'); if (el) nd = JSON.parse(el.textContent || 'null'); } catch (e) {}
+    const text = (document.body && (document.body.innerText || '')).slice(0, 1500);
+    const loggedIn = /(my downloads|my playlists|account|sign out|log out|credits|downloads\\s*\\(|subscription)/i.test(text);
+    const buildId = (nd && nd.buildId) || '';
+    const apiReveal = [];
+    const scripts = document.querySelectorAll('script[src]');
+    for (let i = 0; i < scripts.length && apiReveal.length < 6; i++) {
+      const s = scripts[i].getAttribute('src') || '';
+      if (/\\/_next\\/static\\//.test(s)) apiReveal.push(s);
+    }
+    return {
+      url: location.href,
+      cookieNames: Object.keys(ck),
+      localStorageKeys: Object.keys(ls),
+      loggedInHint: loggedIn,
+      buildId: buildId,
+      page: (nd && nd.page) || null,
+      props: nd && nd.props && nd.props.pageProps ? Object.keys(nd.props.pageProps) : null,
+      scripts: apiReveal,
+      bodyText: text.slice(0, 600)
+    };
+  })()`;
+
+  try {
+    child = spawn(chromePath, [
+      '--user-data-dir=' + userDataDir,
+      '--remote-debugging-port=0',
+      '--remote-allow-origins=*',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-popup-blocking',
+      '--disable-blink-features=AutomationControlled',
+      'about:blank'
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', () => {});
+    child.on('error', () => {});
+
+    const wsUrl = await waitForDebugger(userDataDir, Math.min(remaining, 40000));
+    if (Date.now() - startedAt > remaining) throw new Error('Timed out while Chrome was starting.');
+
+    ws = await connectWS(wsUrl, 15000);
+    cdp = new CDP(ws);
+
+    const created = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const attached = await cdp.send('Target.attachToTarget', { targetId: created.targetId, flatten: true });
+    pageSession = attached.sessionId;
+
+    await cdp.send('Runtime.enable', {}, pageSession);
+    await cdp.send('Page.enable', {}, pageSession);
+    await cdp.send('Network.enable', {}, pageSession);
+
+    for (const p of pairs) {
+      for (const url of ['https://uppbeat.io', 'https://www.uppbeat.io']) {
+        await cdp.send('Network.setCookie', { name: p.name, value: p.value, url, path: '/' }, pageSession).catch(() => {});
+      }
+    }
+    await cdp.send('Page.navigate', { url: 'https://uppbeat.io/account' }, pageSession);
+
+    let dump = null;
+    for (;;) {
+      if (Date.now() - startedAt > remaining) break;
+      dump = (await evaluate(cdp, pageSession, WHOAMI_JS).catch(() => null)) || null;
+      if (dump && dump.url && dump.url.indexOf('uppbeat.io') !== -1 && dump.bodyText) break;
+      await sleep(700);
+    }
+
+    process.stdout.write(JSON.stringify({ ok: true, whoami: dump }) + '\n');
     return 0;
   } catch (e) {
     process.stdout.write(JSON.stringify({ ok: false, error: (e && e.message) || 'Unknown error' }) + '\n');
@@ -309,6 +686,18 @@ async function runVerify() {
 
 async function run() {
   const args = process.argv.slice(2);
+
+  if (args.indexOf('--whoami') !== -1) {
+    return runWhoami();
+  }
+
+  if (args.indexOf('--capture') !== -1) {
+    return runCapture();
+  }
+
+  if (args.indexOf('--probe') !== -1) {
+    return runProbe();
+  }
 
   if (args.indexOf('--verify') !== -1) {
     return runVerify();
@@ -411,18 +800,20 @@ async function run() {
     await sleep(300);
     await evaluate(cdp, pageSession, CLICK_SUBMIT_JS);
 
-    /* 4) Wait for the login to stick: /api/v1/me answering 200 is definitive. */
+    /* 4) Wait for the login to stick: setup_frontend answering signedIn=true
+       is definitive (the body carries auth_token / user.is_authenticated). */
     let me = null;
     for (;;) {
       if (Date.now() - startedAt > remaining) break;
-      me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0 };
-      if (me.status === 200) break;
+      me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0, signedIn: false };
+      if (me.signedIn) break;
       const s = (await evaluate(cdp, pageSession, STATE_JS).catch(() => null)) || {};
       if (s.failure) break;
       await sleep(700);
     }
 
-    /* 5) Harvest cookies. */
+    /* 5) Harvest cookies (uppbeat.io + the prod-api subdomain share .uppbeat.io
+       session cookies, so filtering on the registrable domain catches both). */
     const cookiesRes = await cdp.send('Network.getAllCookies', {}, pageSession);
     const all = ((cookiesRes && cookiesRes.cookies) || []).filter((c) =>
       String(c.domain || '').replace(/^\./, '').indexOf('uppbeat.io') !== -1 ||
@@ -432,8 +823,8 @@ async function run() {
     if (!cookieStr || !/(authorization_token|auth_token|session|authorization)/i.test(cookieStr)) {
       throw new Error('Chrome logged in but exported no session cookie. Check the Chrome window — the login may not have completed.');
     }
-    if (!me || me.status !== 200) {
-      me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0 };
+    if (!me || !me.signedIn) {
+      me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0, signedIn: false };
     }
 
     process.stdout.write(JSON.stringify({
