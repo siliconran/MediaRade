@@ -33,6 +33,14 @@ export function UppbeatView() {
   const [progress, setProgress] = createSignal(0);
   const [playing, setPlaying] = createSignal(null);
   const [freeOnly, setFreeOnly] = createSignal(false);    // hide premium tracks from results
+  const [tab, setTab] = createSignal('music');            // music | sfx | trending | luts
+
+  const TABS = [
+    { id: 'music', label: 'Music' },
+    { id: 'sfx', label: 'Sound FX' },
+    { id: 'trending', label: 'Trending' },
+    { id: 'luts', label: 'LUTs' }
+  ];
 
   let input, audioEl;
 
@@ -303,6 +311,7 @@ export function UppbeatView() {
 
     setSearching(true);
     setError(null);
+    setTab('music');
     Uppbeat.search(query).then(function (tracks) {
       setSearching(false);
       setResults(tracks);
@@ -314,10 +323,31 @@ export function UppbeatView() {
     });
   }
 
+  /** Load a curated browse tab (music / sfx / trending / luts). */
+  function doBrowse(t) {
+    if (!signedIn()) {
+      setError('Sign in first — Uppbeat gates the catalogue and every download on your account.');
+      return;
+    }
+    setTab(t);
+    setSearching(true);
+    setError(null);
+    Uppbeat.browse(t).then(function (tracks) {
+      setSearching(false);
+      setResults(tracks);
+      if (!tracks.length) setError('Uppbeat returned nothing for this tab.');
+    }).catch(function (e) {
+      setSearching(false);
+      setResults([]);
+      setError(e.message);
+    });
+  }
+
 /* --- preview -------------------------------------------------------------- */
 
   function togglePlay(t) {
     if (!t.preview) { Toast.info('No preview', 'Uppbeat did not supply a preview URL for this track.'); return; }
+    if (t.video) { Toast.info('Video preview', 'This is a video asset (LUT / motion graphic) — open it on uppbeat.io to preview.'); return; }
     if (playing() === t.id) {
       try { audioEl.pause(); } catch (e) {}
       setPlaying(null);
@@ -477,6 +507,17 @@ export function UppbeatView() {
           <Btn variant="primary" label="Search" onClick={() => doSearch()} />
         </div>
 
+        <div class="mr-tabs" role="tablist" style={{ 'margin-bottom': '8px' }}>
+          <For each={TABS}>
+            {(t) => (
+              <button class={'ps2-chip' + (tab() === t.id ? ' ps2-chip--on' : '')}
+                onClick={() => doBrowse(t.id)}>
+                {t.label}
+              </button>
+            )}
+          </For>
+        </div>
+
         <div class="mr-filters" style={{ 'margin-bottom': '6px' }}>
           <div class="mr-filters__group">
             <span class="mr-filters__label">Account</span>
@@ -572,7 +613,7 @@ export function UppbeatView() {
         <Show when={!searching() && signedIn() && !results().length && !error()}>
           <Empty title="Search Uppbeat"
             hint={signedIn()
-              ? 'Type a mood or genre above. Downloads land in <code>Downloads\\Audio\\Uppbeat</code>.'
+              ? 'Type a mood or genre above, or pick a tab — Music, Sound FX, Trending or LUTs. Downloads land in <code>Downloads\\Audio\\Uppbeat</code>.'
               : 'Sign in and import your session first — the catalogue and downloads are gated on your account.'} />
         </Show>
 
@@ -680,8 +721,17 @@ function TrackCard(props) {
               </>
             }
           >
-            <Btn size="sm" variant="primary" label={props.busy ? 'Downloading…' : 'Download'}
-              disabled={props.busy} onClick={props.onDownload} />
+            <Show
+              when={!t().video}
+              fallback={
+                <Btn size="sm" variant="primary" label="Open"
+                  title="Video assets (LUTs / motion graphics) are opened on uppbeat.io — MediaRade downloads audio"
+                  onClick={() => CEP.openInBrowser(t().page)} />
+              }
+            >
+              <Btn size="sm" variant="primary" label={props.busy ? 'Downloading…' : 'Download'}
+                disabled={props.busy} onClick={props.onDownload} />
+            </Show>
           </Show>
 
           {/* the credit is one click away from every track, always */}

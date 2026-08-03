@@ -195,8 +195,19 @@ const CLICK_CONTINUE_JS = `(() => {
 })()`;
 
 const ME_JS = `(async () => {
+  /* The SPA authenticates to prod-api with the auth_token it keeps in a cookie,
+     sent as the X-Auth-Token header. prod-api is a different host than
+     uppbeat.io, so a plain credentials:'include' fetch never carries the
+     host-only cookie — we must read it from document.cookie and send it. */
+  let tok = '';
   try {
-    const r = await fetch(${JSON.stringify(ACCOUNT_PATH)}, { credentials: 'include', headers: { 'Accept': 'application/json' } });
+    const ck = document.cookie.match(/(?:^|;\\s*)(auth_token|authorization_token)=([^;]+)/i);
+    if (ck) tok = decodeURIComponent((ck[2] || '').trim());
+  } catch (e) {}
+  try {
+    const h = { 'Accept': 'application/json' };
+    if (tok) h['X-Auth-Token'] = tok;
+    const r = await fetch(${JSON.stringify(ACCOUNT_PATH)}, { credentials: 'include', headers: h });
     let json = null;
     try { json = await r.json(); } catch (e) {}
     const signedIn = !!(json && (json.auth_token || (json.user && json.user.is_authenticated)));
@@ -296,7 +307,11 @@ async function runVerify() {
       await sleep(700);
     }
     if (me.status === 401) throw new Error('These cookies no longer log in — re-sign-in at uppbeat.io.');
-    if (!me.signedIn) throw new Error('These cookies no longer log in — re-sign-in at uppbeat.io (setup_frontend did not authenticate).');
+    if (!me.signedIn) {
+      const snippet = me.json ? String(JSON.stringify(me.json)).slice(0, 160) : '';
+      const detail = 'HTTP ' + (me.status || '?') + (snippet ? ' ' + snippet : '');
+      throw new Error('These cookies no longer log in — re-sign-in at uppbeat.io (setup_frontend did not authenticate: ' + detail + ').');
+    }
 
     process.stdout.write(JSON.stringify({ ok: true, me: me.json }) + '\n');
     return 0;

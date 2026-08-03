@@ -43,6 +43,10 @@ const BASE = 'https://uppbeat.io';
    account/plan state lives in /api/setup_frontend (top-level `auth_token`,
    `user`, `subscriptionData`). Search is a client-side Typesense multi-search. */
 const API_BASE = 'https://prod-api.uppbeat.io';
+/* The rebuilt SPA also serves waveform + download from this CDN origin. It
+   authenticates with the same auth_token header and keys on the asset's own
+   id (track_id / sfx_id), not the musicvine id. */
+const CDN_BASE = 'https://api-v2-cdn.uppbeat.io';
 const TYPESENSE_BASE = 'https://3feynu8vjgbqkl27p.a1.typesense.net';
 const TYPESENSE_KEY = 'MqZdBn4VL8k7IqhuMKOSNuBxmU0isNLk';
 
@@ -52,7 +56,7 @@ export const DEFAULT_ENDPOINTS = {
   search: '/api/v1/search/tracks?query={q}&page={page}&limit={limit}',
   track: '/api/v1/track/{id}',
   account: '/api/setup_frontend',
-  download: '/api/musicvine/license/{id}'
+  download: 'https://api-v2-cdn.uppbeat.io/api/v1/track/{id}/download'
 };
 
 /* Empty string = yt-dlp is told the profile folder "behind" `firefox`-family
@@ -198,13 +202,16 @@ function sessionHeaders(extra) {
     h.Cookie = session.cookies;
     const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
     if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
-    /* The rebuilt SPA authenticates to prod-api with an `auth_token` string
-       returned by /api/setup_frontend, sent as the X-Auth-Token header. Prefer
-       that token; fall back to whichever session cookie Uppbeat set. */
-    const tok = (session.token || '').trim() ||
-      (session.cookies.match(/(?:^|;\s*)(authorization_token|auth_token)=([^;]+)/i) || [])[2] || '';
-    let v = String(tok).trim();
+    /* The rebuilt SPA authenticates to prod-api with an auth_token it keeps in
+       a cookie and sends as the X-Auth-Token header. The cookie is the
+       authoritative source (the panel's stored token can hold a stale boolean
+       from an older save), so prefer it over session.token. */
+    let v = String((session.cookies.match(/(?:^|;\s*)(auth_token|authorization_token)=([^;]+)/i) || [])[2] || '').trim();
     try { v = decodeURIComponent(v); } catch (e) {}
+    if (!v) {
+      v = String(session.token || '').trim();
+      try { v = decodeURIComponent(v); } catch (e) {}
+    }
     if (v) {
       h['Authorization'] = 'Bearer ' + v;
       h['X-Authorization-Token'] = v;
@@ -239,7 +246,8 @@ function httpGet(url, opts) {
       timeout: opts.timeout || 25000
     }, function (res) {
       // follow redirects ourselves so cookies survive the hop
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && (opts.depth || 0) < 5) {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location &&
+          opts.follow !== false && (opts.depth || 0) < 5) {
         res.resume();
         const next = res.headers.location.indexOf('http') === 0
           ? res.headers.location
@@ -353,32 +361,42 @@ function pick(obj, names) {
 
 function normalizeTrack(t) {
   if (!t || typeof t !== 'object') return null;
-  const id = pick(t, ['id', 'trackId', 'uuid', 'slug']);
+  /* Prefer the asset's own id. On the real catalogue a track doc is keyed by
+     `track_id` and an sfx by `sfx_id`; `id` on trending rows is a composite
+     ("2372_premium_top") and on sfx rows is the variant id. The download
+     endpoint keys on track_id / sfx_id, so that must be what `id` holds. */
+  const id = pick(t, ['track_id', 'sfx_id', 'id', 'trackId', 'uuid', 'slug']);
   if (!id) return null;
-  const slug = pick(t, ['slug', 'permalink', 'url']);
-  const artist = pick(t, ['artist.name', 'artist', 'artistName', 'author.name']) || 'Unknown artist';
+  const slug = pick(t, ['track_slug', 'sfx_slug', 'slug', 'permalink', 'url']);
+  const artist = pick(t, ['contributor_name', 'artist.name', 'artist', 'artistName', 'author.name']) || 'Unknown artist';
   return {
     id: String(id),
+    kind: pick(t, ['asset_type']) || (t.sfx_id ? 'sfx' : 'track'),
     slug: slug ? String(slug) : null,
     title: String(pick(t, ['title', 'name']) || 'Untitled'),
     artist: String(artist),
-    artistSlug: pick(t, ['artist.slug', 'artistSlug']),
+    artistSlug: pick(t, ['contributor_slug', 'artist.slug', 'artistSlug']),
     duration: Number(pick(t, ['duration', 'length', 'durationSeconds', 'version_length', 'versionLength'])) || null,
     bpm: pick(t, ['bpm', 'tempo']),
-    genres: [].concat(pick(t, ['genres', 'genre', 'styles']) || []).map(function (g) {
+    genres: [].concat(pick(t, ['genres', 'genre', 'styles', 'type', 'theme']) || []).map(function (g) {
       return typeof g === 'string' ? g : (g && (g.name || g.title)) || '';
     }).filter(Boolean),
-    moods: [].concat(pick(t, ['moods', 'mood', 'tags']) || []).map(function (m) {
+    moods: [].concat(pick(t, ['moods', 'mood', 'tags', 'theme']) || []).map(function (m) {
       return typeof m === 'string' ? m : (m && (m.name || m.title)) || '';
     }).filter(Boolean),
     premium: !!(pick(t, ['isPremium', 'premium', 'requiresSubscription', 'is_premium',
                          'premiumTrack', 'premiumTier', 'license.isPremium'])) &&
       !pick(t, ['isFree', 'free', 'freeTrack', 'is_free']),
     preview: pick(t, ['previewUrl', 'preview', 'audioUrl', 'mp3', 'streamUrl', 'file.preview',
-                      'version_preview_uri', 'versionPreviewUri']),
-    artwork: pick(t, ['artwork', 'image', 'imageUrl', 'artist.image', 'cover']),
+                      'version_preview_uri', 'versionPreviewUri', 'preview_video_url']),
+    video: !!pick(t, ['preview_video_url', 'previewVideoUrl']),
+    artwork: pick(t, ['artwork', 'image', 'imageUrl', 'artist.image', 'cover', 'contributor_image']),
     musicvineTrackId: pick(t, ['musicvine_track_id', 'musicvineTrackId']),
-    page: slug ? (String(slug).indexOf('http') === 0 ? String(slug) : BASE + '/track/' + slug) : BASE,
+    page: slug ? (String(slug).indexOf('http') === 0 ? String(slug)
+      : (t.asset_type && t.asset_type.indexOf('lut') !== -1 ? BASE + '/motion-graphics/' + slug
+        : (t.asset_type === 'motiongraphic' ? BASE + '/motion-graphics/' + slug
+          : BASE + '/track/' + slug)))
+      : BASE,
     raw: t
   };
 }
@@ -435,6 +453,91 @@ function readPlan(acct) {
   return truthy(premiumFlag) ? 'premium' : 'free';
 }
 
+function storeToken(json) {
+  /* setup_frontend reports `auth_token` as a boolean (false when logged out)
+     or the real token string when signed in. Only keep actual token strings,
+     never the boolean representation. */
+  let v = String((json && (json.auth_token || json.token)) || '').trim();
+  if (v === 'true' || v === 'false' || v.length < 8) v = '';
+  session.token = v;
+}
+
+/** Decode a JWT's payload claims (base64url) without verifying the signature.
+    We only read what Uppbeat itself signed into the token the user pasted.
+    Uses a dependency-free base64 decoder so it works in the panel (Node),
+    the browser, and the jsdom test realm alike. */
+function jwtPayload(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = String(token).trim().split('.');
+  if (parts.length !== 3) return null;
+  let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  try {
+    const CH = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const bin = [];
+    let acc = 0, bits = 0;
+    for (let i = 0; i < b64.length; i++) {
+      if (b64[i] === '=') break;
+      const idx = CH.indexOf(b64[i]);
+      if (idx < 0) return null;
+      acc = (acc << 6) | idx;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bin.push((acc >> bits) & 0xff);
+      }
+    }
+    let out = '';
+    for (let i = 0; i < bin.length; i++) out += String.fromCharCode(bin[i]);
+    return JSON.parse(out);
+  } catch (e) { return null; }
+}
+
+/** Read the plan straight from the auth token's own claims (role/permissions).
+    Returns a plan name ('creator', 'premium', …) or '' when the cookies hold no
+    decodable token. This is what makes a manually pasted key fully work without
+    opening Chrome or reaching an API. */
+function planFromToken(cookies) {
+  const m = String(cookies || '').match(/(?:^|;\s*)(auth_token|authorization_token)=([^;]+)/i);
+  if (!m) return '';
+  let v = m[2].trim();
+  try { v = decodeURIComponent(v); } catch (e) {}
+  const claims = jwtPayload(v);
+  if (!claims) return '';
+  const roles = [].concat(claims.role || []);
+  if (roles.some(function (r) { return /creator|pro|premium|studio|business|paid|partner/i.test(String(r)); })) {
+    return 'creator';
+  }
+  const perms = [].concat(claims.permissions || []);
+  if (perms.some(function (p) { return /download_premium|unlimited_downloads/i.test(String(p)); })) {
+    return 'creator';
+  }
+  if (claims.premium || claims.isPremium) return 'premium';
+  const plan = String(claims.plan || claims.planName || claims.tier || '').trim().toLowerCase();
+  if (plan && plan !== 'free' && plan !== 'none') return plan;
+  return '';
+}
+
+/** True when the session cookies carry a decodable auth JWT, whatever its
+    plan says. Used to decide whether a manual token can settle the plan locally
+    (a real token is authoritative) instead of launching a browser. */
+function hasAuthJwt(cookies) {
+  const m = String(cookies || '').match(/(?:^|;\s*)(auth_token|authorization_token)=([^;]+)/i);
+  if (!m) return false;
+  let v = m[2].trim();
+  try { v = decodeURIComponent(v); } catch (e) {}
+  return jwtPayload(v) !== null;
+}
+
+/** Resolve the plan from a pasted token: premium claims -> 'creator', a
+    decodable-but-free token -> 'free', no token at all -> '' (caller falls
+    back to the network/browser path). */
+function planFromSession(cookies) {
+  const p = planFromToken(cookies);
+  if (p) return p;
+  return hasAuthJwt(cookies) ? 'free' : '';
+}
+
 /* ========================================================================= */
 
 export const Uppbeat = {
@@ -454,6 +557,11 @@ export const Uppbeat = {
     const stored = Config.get('uppbeatSession');
     if (stored && stored.cookies) {
       session = Object.assign({ plan: 'free', signedIn: true, token: '' }, stored);
+      /* A manually pasted auth_token is a JWT that already names the plan
+         (role/permissions). Re-derive it here so a stale saved `plan` (e.g. a
+         pre-JWT 'free') never mislabels a Creator session on the next boot. */
+      const local = planFromSession(session.cookies);
+      if (local) session.plan = local;
     }
     return session;
   },
@@ -685,6 +793,13 @@ export const Uppbeat = {
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
+    const local = planFromSession(session.cookies);
+    if (local) {
+      session.plan = local;
+      session.planError = null;
+      Uppbeat.saveSession();
+      return Promise.resolve(session);
+    }
     return Uppbeat.refreshPlan();
   },
 
@@ -704,6 +819,13 @@ export const Uppbeat = {
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
+    const local = planFromSession(session.cookies);
+    if (local) {
+      session.plan = local;
+      session.planError = null;
+      Uppbeat.saveSession();
+      return Promise.resolve(session);
+    }
     return Uppbeat.refreshPlan();
   },
 
@@ -773,7 +895,7 @@ export const Uppbeat = {
         }
         const acct = out.me && (out.me.user || out.me.data || out.me);
         session.cookies = out.cookies || '';
-        session.token = String(out.me && (out.me.auth_token || out.me.token) || '').trim();
+        storeToken(out.me);
         session.account = acct ? {
           email: pick(acct, ['email', 'user.email']),
           name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
@@ -815,7 +937,7 @@ export const Uppbeat = {
           throw new Error(err);
         }
         const acct = out.me && (out.me.user || out.me.data || out.me);
-        session.token = String(out.me && (out.me.auth_token || out.me.token) || '').trim();
+        storeToken(out.me);
         if (acct) {
           session.account = {
             email: pick(acct, ['email', 'user.email']),
@@ -833,10 +955,21 @@ export const Uppbeat = {
     });
   },
 
-  /** Best-effort plan refresh: prefers the real-browser verify (which can pass
-      the Vercel checkpoint), falling back to the direct Node call (which the
-      edge usually 429s, but is the only option if a browser isn't available). */
+  /** Best-effort plan refresh. The pasted auth_token is a JWT whose claims
+      already carry the role (role/permissions), so we decode it locally first —
+      that is authoritative, costs nothing, and never opens a browser. Only if
+      the token is not a decodable JWT do we fall back to the real-browser
+      verify (Vercel checkpoint) and then the direct Node call (which the edge
+      usually 429s). */
   refreshPlan: function () {
+    const local = planFromSession(session.cookies);
+    if (local) {
+      session.plan = local;
+      session.planError = null;
+      session.signedIn = true;
+      Uppbeat.saveSession();
+      return Promise.resolve(session);
+    }
     return Uppbeat.verifyInBrowser()
       .catch(function () { return Uppbeat.me().catch(function () { return session; }); });
   },
@@ -949,7 +1082,7 @@ export const Uppbeat = {
         email: pick(acct, ['email', 'user.email']),
         name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
       };
-      session.token = String(json && (json.auth_token || json.token) || '').trim();
+      storeToken(json);
       session.plan = readPlan(acct) || 'free';
       session.planError = null;
       session.signedIn = true;
@@ -994,7 +1127,7 @@ export const Uppbeat = {
   /**
    * Search the catalogue.
    * The rebuilt SPA searches a Typesense cluster client-side; we mirror that
-   * with the same public key + collection ("tracks", query_by "name").
+   * with the same public key + collection ("tracks.v3", query_by "name, keywords").
    * @param {string} query
    * @param {object} opts { page, limit, genre, mood }
    */
@@ -1002,11 +1135,14 @@ export const Uppbeat = {
     opts = opts || {};
     const limit = opts.limit || Config.get('uppbeatResultCount') || 30;
     const q = String(query || '').trim();
-    const url = TYPESENSE_BASE + '/collections/tracks/documents/search?q=' +
-      encodeURIComponent(q) +
-      '&query_by=' + encodeURIComponent('name') +
-      '&page=' + (opts.page || 1) +
-      '&per_page=' + limit;
+    const parts = ['q=' + encodeURIComponent(q),
+                   'query_by=' + encodeURIComponent('name, keywords'),
+                   'query_by_weights=' + encodeURIComponent('name:10, keywords:3'),
+                   'exclude_fields=' + encodeURIComponent('embedding'),
+                   'page=' + (opts.page || 1),
+                   'per_page=' + limit,
+                   'sort_by=' + encodeURIComponent('free_sort_score_v5:desc')];
+    const url = TYPESENSE_BASE + '/collections/tracks.v3/documents/search?' + parts.join('&');
 
     return httpGet(url, {
       headers: { 'x-typesense-api-key': TYPESENSE_KEY, 'Origin': BASE, 'Referer': BASE + '/' }
@@ -1023,6 +1159,55 @@ export const Uppbeat = {
     });
   },
 
+  /**
+   * Browse a Uppbeat tab the way the SPA does — a curated multi_search against
+   * the Typesense collections rather than the carousels JSON the site's pages
+   * use (which MediaRade has no token-issue route for).
+   * @param {string} tab  'music' | 'sfx' | 'trending' | 'luts'
+   * @param {object} opts { page, limit, category }
+   */
+  browse: function (tab, opts) {
+    opts = opts || {};
+    const limit = opts.limit || Config.get('uppbeatResultCount') || 30;
+    const page = opts.page || 1;
+    const category = opts.category;
+
+    const baseFilter = function (collection, extra) {
+      const bits = [];
+      if (collection === 'tracks.v3' && category) bits.push('featured_tags.slug:/music/category/' + encodeURIComponent(category));
+      if (extra) bits.push(extra);
+      return bits.length ? 'filter_by=' + encodeURIComponent(bits.join(' && ')) : '';
+    };
+
+    var searches = [];
+    if (tab === 'sfx') {
+      searches.push({ collection: 'sfx.v3', q: '*', sort_by: 'free_sort_score_v5:desc', per_page: limit, page: page, query_by: 'name, keywords', exclude_fields: 'embedding' });
+    } else if (tab === 'trending') {
+      searches.push({ collection: 'tracksTrending', q: '*', sort_by: 'trending_order:asc', per_page: limit, page: page, query_by: 'name, keywords', exclude_fields: 'embedding', filter_by: 'trending_category:=premium_top' });
+    } else if (tab === 'luts') {
+      searches.push({ collection: 'motiongraphics.v2', q: '*', sort_by: 'relevance_free:desc', per_page: limit, page: page, query_by: 'name, keywords', exclude_fields: 'embedding', filter_by: 'is_lut:true' });
+    } else {
+      const f = baseFilter('tracks.v3');
+      searches.push({ collection: 'tracks.v3', q: '*', sort_by: 'free_sort_score_v5:desc', per_page: limit, page: page, query_by: 'name, keywords', query_by_weights: 'name:10, keywords:3', exclude_fields: 'embedding', filter_by: f || undefined });
+    }
+
+    return httpGet(TYPESENSE_BASE + '/multi_search', {
+      method: 'POST',
+      headers: { 'x-typesense-api-key': TYPESENSE_KEY, 'Origin': BASE, 'Referer': BASE + '/', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ searches: searches })
+    }).then(function (res) {
+      if (res.status !== 200) throw new Error(explainStatus(res.status, 'browse', res));
+      let json;
+      try { json = JSON.parse(res.body); } catch (e) { json = null; }
+      const hits = (json && json.results && json.results[0] && json.results[0].hits) || [];
+      const tracks = hits.map(function (h) { return h.document; }).map(normalizeTrack).filter(Boolean);
+      if (!tracks.length && hits.length) {
+        Paths.log('uppbeat: browse(' + tab + ') returned an unrecognised shape — ' + U.truncate(JSON.stringify(json), 400));
+      }
+      return tracks;
+    });
+  },
+
   track: function (id) {
     return Uppbeat.json(fill(endpoints().track, { id: id }), 'track').then(function (json) {
       return normalizeTrack(json && (json.track || json.data || json)) ;
@@ -1030,18 +1215,36 @@ export const Uppbeat = {
   },
 
   /**
-   * Resolve the actual audio URL for a track. The rebuilt SPA calls
-   * /api/musicvine/license/{musicvine_track_id} and reads `data.link`.
-   * Uppbeat gates this on the account's plan, so a 402/403 here is the plan
-   * talking, not a bug.
+   * Resolve the actual audio URL for a track. The rebuilt SPA downloads from
+   * api-v2-cdn.uppbeat.io/api/v1/track/{track_id}/download (or sfx_id for sound
+   * effects), which either redirects to the file, returns it directly, or hands
+   * back JSON with a link. Uppbeat gates this on the account's plan, so a
+   * 401/402/403 here is the plan or session talking, not a bug.
    */
   resolveDownload: function (track) {
-    const id = track.musicvineTrackId || track.musicvine_track_id || track.id;
-    return Uppbeat.json(fill(endpoints().download, { id: id }), 'download').then(function (json) {
-      const url = pick(json, ['data.link', 'link', 'url', 'downloadUrl', 'download_url', 'file', 'signedUrl']);
-      if (!url) throw new Error('Uppbeat did not return a download URL for this track. Your plan may not cover it.');
-      return String(url);
-    });
+    const id = track.id;
+    const url = fill(endpoints().download, { id: id });
+    return httpGet(url, { follow: false, accept: 'application/json, audio/*, */*' })
+      .then(function (res) {
+        if (res.status >= 300 && res.status < 400 && res.headers.location) {
+          return res.headers.location.indexOf('http') === 0
+            ? res.headers.location
+            : BASE + res.headers.location;
+        }
+        if (res.status !== 200) throw new Error(explainStatus(res.status, 'download', res));
+        const ct = String((res.headers && res.headers['content-type']) || '').toLowerCase();
+        const audioish = /audio|octet-stream|mpeg|mp3|wav|m4a/.test(ct);
+        let json = null;
+        try { json = JSON.parse(res.body); } catch (e) { json = null; }
+        if (json && typeof json === 'object') {
+          const link = pick(json, ['data.link', 'link', 'url', 'downloadUrl', 'download_url',
+                                   'file', 'signedUrl', 'data.url', 'result', 'audioUrl']);
+          if (link) return String(link);
+        }
+        if (audioish) return url;
+        throw new Error('Uppbeat did not return a download URL for this track (HTTP ' + res.status +
+                        ' ' + ct + '). Your plan may not cover it, or the download endpoint moved.');
+      });
   },
 
   /**
