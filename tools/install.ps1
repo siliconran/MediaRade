@@ -51,6 +51,13 @@ if ($Symlink) {
         Copy-Item $s $d -Recurse -Force
         Write-Host "copied  $item"
     }
+
+    # the Chrome-driven Uppbeat login helper (zero-dependency .mjs, run by the
+    # system Node, so it lives outside the vite bundle)
+    $toolDir = Join-Path $dst 'tools'
+    New-Item -ItemType Directory -Force $toolDir | Out-Null
+    Copy-Item (Join-Path $src 'tools\uppbeat-login.mjs') (Join-Path $toolDir 'uppbeat-login.mjs') -Force
+    Write-Host 'copied  tools\uppbeat-login.mjs'
     Write-Host "installed to $dst" -ForegroundColor Green
 }
 

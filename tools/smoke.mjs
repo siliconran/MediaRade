@@ -10,7 +10,7 @@
        npm run build && node tools/smoke.mjs
 
    ========================================================================== */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -453,6 +453,18 @@ check('setPlan redetect keeps signed-in premium path even if /me is unreachable'
   typeof UB.session().cookies, 'string');
 UB.clearSession();
 check('diagnose is exposed for the sign-in popup', typeof UB.diagnose, 'function');
+check('loginWithCredentials is exposed for the password path', typeof UB.loginWithCredentials, 'function');
+check('findNode/helperPath are exposed', typeof UB.findNode, 'function' && typeof UB.helperPath, 'function');
+{
+  const beforeSpawns = shims.SPAWNED.length;
+  await UB.loginWithCredentials('', 'pw').catch(() => {});
+  await UB.loginWithCredentials('a@b.invalid-email').catch(() => {});   // no password
+  await UB.loginWithCredentials('not-an-email', 'pw').catch(() => {});
+  check('loginWithCredentials rejects bad input WITHOUT spawning a process',
+    shims.SPAWNED.length === beforeSpawns, true);
+}
+check('login helper ships with the repo',
+  existsSync(join(ROOT, 'tools', 'uppbeat-login.mjs')), true);
 await UB.setAuthToken('xyzsecret');
 check('auth_token re-checks the plan against the account endpoint', UB.session().plan, 'creator');
 check('a Creator account is recognised as premium (was showing free)',

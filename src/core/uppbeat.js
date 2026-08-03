@@ -692,6 +692,86 @@ export const Uppbeat = {
     return Uppbeat.me().catch(function () { return session; });
   },
 
+  /* --- email & password (driven through a real Chrome window) -------------
+     Uppbeat now sits behind a Vercel "security checkpoint" that answers 429 to
+     every non-browser client (curl, Node, yt-dlp, PowerShell) regardless of IP
+     — which is why a VPN never helped. The only thing that passes it is a real
+     browser, so we drive one: launch Chrome, let it solve the checkpoint, fill
+     the actual login form, and import the session cookies it earns. The helper
+     (tools/uppbeat-login.mjs) runs under the SYSTEM Node, not the panel's.     */
+
+  /** Resolve the system Node executable that can drive Chrome (needs Node 21+
+      for global WebSocket). Prefers MR_NODE, then common install paths, then
+      `where node`. */
+  findNode: function () {
+    let fs = null, osHome = '';
+    try { fs = CEP.fs; } catch (e) {}
+    const abs = function (p) {
+      try { return p && fs && fs.existsSync(p) ? p : null; } catch (e) { return null; }
+    };
+    const d = [process.env.MR_NODE,
+      'C:\\Program Files\\nodejs\\node.exe',
+      'C:\\Program Files (x86)\\nodejs\\node.exe'].map(abs).filter(Boolean);
+    if (d.length) return Promise.resolve(d[0]);
+    return Proc.which('node');
+  },
+
+  /** Path to the shipped login helper inside this extension's install. */
+  helperPath: function () {
+    try {
+      const ext = CEP.systemPath('extension');
+      if (!ext) return '';
+      return CEP.path.join(ext, 'tools', 'uppbeat-login.mjs');
+    } catch (e) { return ''; }
+  },
+
+  /** Sign in to Uppbeat by driving a real Chrome window. Accepts the account
+      email + password, spawns the helper (password via stdin, never argv),
+      and on success stores the harvested session so plan/search work. */
+  loginWithCredentials: function (email, password) {
+    email = String(email == null ? '' : email).trim();
+    password = String(password == null ? '' : password);
+    if (!email) return Promise.reject(new Error('Enter your Uppbeat email address.'));
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return Promise.reject(new Error('That email address does not look valid.'));
+    if (!password) return Promise.reject(new Error('Enter your Uppbeat password.'));
+
+    return Uppbeat.findNode().then(function (node) {
+      if (!node) throw new Error('Could not find a system Node.js to drive Chrome. Install Node.js 21+ and try again.');
+      const script = Uppbeat.helperPath();
+      if (!script) throw new Error('Node is unavailable in this panel — the Chrome login needs the bundled Node runtime.');
+      let fs = null;
+      try { fs = CEP.fs; if (fs && !fs.existsSync(script)) throw new Error('The Chrome login helper is not installed — re-run "npm run deploy".'); } catch (e) { if (e && e.message && e.message.indexOf('deploy') > -1) throw e; }
+
+      return Proc.run(node, [script, '--email', email, '--timeout', '120000'], {
+        stdin: password + '\n',
+        timeout: 150000,
+        maxBuffer: 3e6
+      }).then(function (r) {
+        let out = null;
+        const m = r.stdout.match(/\{[\s\S]*\}/);
+        if (m) { try { out = JSON.parse(m[0]); } catch (e) {} }
+        if (r.code !== 0 || !out || !out.ok) {
+          const err = out && out.error ? out.error
+            : (r.stderr || r.stdout || '').split('\n').filter(Boolean).slice(-3).join(' | ')
+              || 'Chrome login did not complete.';
+          throw new Error(err);
+        }
+        const acct = out.me && (out.me.user || out.me.data || out.me);
+        session.cookies = out.cookies || '';
+        session.account = acct ? {
+          email: pick(acct, ['email', 'user.email']),
+          name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
+        } : null;
+        session.plan = acct ? (readPlan(acct) || 'free') : 'free';
+        session.planError = null;
+        session.signedIn = true;
+        session.importedAt = Date.now();
+        Uppbeat.saveSession();
+        return session;
+      });
+    });
+  },
+
   /** Manual plan override — for when Uppbeat won't report the account level
       (e.g. /me is blocked) but you know it's paid. Passing a plan name like
       'creator' unlocks premium; 'auto'/'redetect' re-runs detection instead

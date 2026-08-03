@@ -129,6 +129,35 @@ export function UppbeatView() {
       }
     });
 
+    /* Username + password — driven through a real Chrome window, so the
+       Vercel security checkpoint (which 429s every non-browser client) is
+       solved by the browser itself. */
+    const passEmailIn = U.el('input', { class: 'ps2-input', type: 'text',
+      placeholder: 'Uppbeat email',
+      style: { width: '100%', marginTop: '8px', fontSize: '10px' } });
+    const passIn = U.el('input', { class: 'ps2-input', type: 'password',
+      placeholder: 'Uppbeat password',
+      style: { width: '100%', marginTop: '4px', fontSize: '10px' } });
+    const passBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
+      text: 'Sign in with email & password',
+      title: 'Opens a real Chrome window and logs into uppbeat.io for you — the only method that gets past Uppbeat\'s browser security checkpoint. If a CAPTCHA appears, finish it in that window.',
+      style: { marginTop: '6px' } });
+    const enterPass = function () {
+      if (passBtn.disabled) return;
+      passBtn.disabled = true;
+      setStatus('Opening Chrome and signing in… (finish any CAPTCHA in the Chrome window)', '');
+      Uppbeat.loginWithCredentials(passEmailIn.value, passIn.value).then(function (s) {
+        passBtn.disabled = false;
+        setStatus('Signed in via Chrome.', 'ok');
+        withSession(s);
+      }).catch(function (e) {
+        passBtn.disabled = false;
+        setStatus('Login failed: ' + e.message, 'err');
+      });
+    };
+    passBtn.addEventListener('click', enterPass);
+    passIn.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') enterPass(); });
+
     const manualText = U.el('textarea', {
       class: 'ps2-input', rows: 3,
       placeholder: 'or paste the whole Cookie header / Cookie-Editor export here',
@@ -214,8 +243,12 @@ export function UppbeatView() {
         U.el('div', { class: 'ps2-col-gap', style: { marginTop: '6px' } }, [
           tokenIn,
           U.el('div', {}, [ tokenBtn ]),
+          U.el('hr', { class: 'ps2-hr' }),
+          passEmailIn,
+          passIn,
+          U.el('div', {}, [ passBtn ]),
           U.el('div', { class: 'ps2-caption', html:
-            'In Cookie Editor (or DevTools → Application → Cookies → <code>uppbeat.io</code>), copy the <b>value</b> of <code>auth_token</code> or <code>authorization_token</code> into the box above — the panel sends it under both names so either one works. If it still 429s, also tick <b>This account is paid</b> below.' }),
+            '<b>No cookies / tokens handy?</b> Sign in here instead — the panel opens a real Chrome window, fills in your email &amp; password, and gets past Uppbeat\u2019s browser security checkpoint that otherwise 429s every request. If a CAPTCHA appears, finish it in the Chrome window.' }),
           U.el('hr', { class: 'ps2-hr' }),
           manualText,
           U.el('div', {}, [ manualBtn ]),
