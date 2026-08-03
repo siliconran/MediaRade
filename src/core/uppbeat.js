@@ -335,6 +335,16 @@ function explainStatus(status, what, res) {
            '"Sign in" to re-open uppbeat.io in your browser and pick the session up again.';
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
+  if (status === 500 && (what === 'download' || what === 'audio')) {
+    return 'Uppbeat\'s download server threw an error (HTTP 500) while resolving this track. This happens ' +
+           'when the stored session token is not the JWT the download API requires, or the session is stale. ' +
+           'Re-import the session while signed in at uppbeat.io (Sign in › Import session), then retry. ' +
+           'If it still 500s, use "Ingest a file": download the track on uppbeat.io yourself and let MediaRade attach the credit.';
+  }
+  if (status === 500) {
+    return 'Uppbeat returned HTTP 500 for the ' + what + ' request — its server-side error is not something ' +
+           'MediaRade can fix. Try again in a few minutes.';
+  }
   if (status === 404) return 'Uppbeat returned 404 for the ' + what + ' endpoint. Their API path has probably changed — update it in Setup › Uppbeat.';
   if (status === 429) {
     const host = res && res.headers && res.headers.server ? ' (' + res.headers.server + ')' : '';
@@ -1075,8 +1085,18 @@ export const Uppbeat = {
       const acct = json && (json.user || json.data || json);
       const authed = acct && (acct.is_authenticated || acct.email || acct.id);
       if (!authed) {
-        const e = new Error('Not signed in — the session cookie is missing or expired.');
-        throw e;
+        /* setup_frontend answering auth_token:false / is_authenticated:false is
+           definitive — the stored session no longer logs in. Mark it signed-out
+           so the UI shows the Sign-in gate instead of a session that 500s on
+           every download. (Network errors take the error handler below, not
+           this branch: a 200 with is_authenticated:false is an answer.) */
+        session.signedIn = false;
+        session.plan = 'free';
+        session.account = null;
+        session.planError = 'The stored session has expired — Uppbeat no longer recognises it. Sign in again and import the session.';
+        Uppbeat.saveSession();
+        try { Paths.log('uppbeat: stored session not recognised — marked signed-out'); } catch (x) {}
+        return session;
       }
       session.account = {
         email: pick(acct, ['email', 'user.email']),
