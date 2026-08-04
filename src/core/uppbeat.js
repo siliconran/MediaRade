@@ -56,7 +56,13 @@ export const DEFAULT_ENDPOINTS = {
   search: '/api/v1/search/tracks?query={q}&page={page}&limit={limit}',
   track: '/api/v1/track/{id}',
   account: '/api/setup_frontend',
-  download: 'https://api-v2-cdn.uppbeat.io/api/v1/track/{id}/download'
+  /* Read straight out of Uppbeat's own bundle: the V2 client calls
+     GET /api/v1/track/{id}/download with a `format` query param and gets back
+     { url, licenseCode, licenseId, pageUrl }. SFX and motion assets have their
+     own shapes. `{id}`, `{variantId}` are substituted. */
+  download: 'https://api-v2-cdn.uppbeat.io/api/v1/track/{id}/download',
+  downloadSfx: 'https://api-v2-cdn.uppbeat.io/api/v1/sfx/{id}/variants/{variantId}/download',
+  downloadMotion: 'https://api-v2-cdn.uppbeat.io/api/v1/motion-graphics/{id}/download'
 };
 
 /* Empty string = yt-dlp is told the profile folder "behind" `firefox`-family
@@ -187,7 +193,16 @@ function fill(tpl, vars) {
    radar, and the XSRF cookie is reflected back the way Laravel expects. */
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-function sessionHeaders(extra) {
+/** True for the V2 asset API (download/waveform). Its own client, read out of
+    Uppbeat's bundle, is `axios.create({ withCredentials: true })` — cookies and
+    nothing else. It has no Authorization/X-Auth-Token handling, and any
+    unrecognised credential makes it 500 instead of 401, so sending our legacy
+    token there is worse than sending nothing. */
+function isV2Host(url) {
+  return /^https?:\/\/api-v2-cdn\.uppbeat\.io/i.test(String(url || ''));
+}
+
+function sessionHeaders(extra, url) {
   const h = Object.assign({
     'User-Agent': BROWSER_UA,
     'Accept': 'application/json, text/plain, */*',
@@ -202,11 +217,14 @@ function sessionHeaders(extra) {
     h.Cookie = session.cookies;
     const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
     if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
-    /* The rebuilt SPA authenticates to prod-api with an auth_token it keeps in
-       a cookie and sends as the X-Auth-Token header. The cookie is the
-       authoritative source (the panel's stored token can hold a stale boolean
-       from an older save), so prefer it over session.token. */
-    let v = String((session.cookies.match(/(?:^|;\s*)(auth_token|authorization_token)=([^;]+)/i) || [])[2] || '').trim();
+    /* Cookies alone for the V2 asset API — mirroring its own client exactly.
+       Adding a token header there converts a truthful 401 into a 500. */
+    if (isV2Host(url)) return h;
+    /* The SPA authenticates to prod-api by reading the `auth_token` COOKIE and
+       echoing it as the X-Auth-Token header (confirmed on the wire). Only
+       auth_token — `authorization_token` belongs to the V2 API and is a
+       different value, so it must not be substituted here. */
+    let v = String((session.cookies.match(/(?:^|;\s*)auth_token=([^;]+)/i) || [])[1] || '').trim();
     try { v = decodeURIComponent(v); } catch (e) {}
     if (!v) {
       v = String(session.token || '').trim();
@@ -219,6 +237,26 @@ function sessionHeaders(extra) {
     }
   }
   return h;
+}
+
+/** Can this cookie jar possibly carry the V2 download credential?
+
+    What is measured, not guessed: the V2 API ignores `auth_token` entirely (it
+    answers 401 exactly as it does with no cookie at all) and reads
+    `authorization_token`. What is inferred: that the real `authorization_token`
+    is an ordinary cookie present in a signed-in browser — likely, since Cookie
+    Editor lists both names, but not something we have observed the value of.
+
+    So this deliberately does NOT demand that exact name. A jar holding nothing
+    but `auth_token` cannot carry a download credential under any naming, and
+    that is the case worth blocking. Anything richer gets its attempt, and the
+    server's answer decides. */
+function canAttemptDownload(cookies) {
+  const names = String(cookies || '').split(';')
+    .map(function (c) { return c.split('=')[0].trim().toLowerCase(); })
+    .filter(Boolean);
+  if (!names.length) return false;
+  return names.some(function (n) { return n !== 'auth_token'; });
 }
 
 /**
@@ -240,7 +278,7 @@ function httpGet(url, opts) {
     const headers = sessionHeaders(Object.assign(
       { 'Accept': opts.accept || 'application/json, text/plain, */*' },
       opts.headers || {}
-    ));
+    ), url);
     if (body !== null) {
       /* Byte length, not character count — a track title with an emoji in it
          would otherwise under-declare the body and hang the request. */
@@ -299,7 +337,7 @@ function httpDownload(url, destPath, onProgress, depth) {
     catch (e) { return reject(new Error('Node is unavailable in this panel.')); }
 
     const parsed = urlmod.parse(url);
-    const headers = sessionHeaders({ 'Accept': '*/*' });
+    const headers = sessionHeaders({ 'Accept': '*/*' }, url);
 
     Paths.ensureDir(CEP.path.dirname(destPath));
     const tmp = destPath + '.part';
@@ -360,6 +398,16 @@ const SIGNED_OUT_MSG =
   '(guest sessions read as the free plan and 500 on download). Press "Sign in" and import the whole ' +
   'cookie set while signed in at uppbeat.io, or paste the full Cookie header rather than the token alone.';
 
+/* Downloads need a second, different cookie from the one that signs you in.
+   This is the single most common reason a signed-in, paid session still cannot
+   download, so it gets its own message. */
+const NO_V2_TOKEN_MSG =
+  'This session can sign in and read your plan, but it cannot download: it holds only an `auth_token`. ' +
+  'Uppbeat uses TWO cookies — `auth_token` for the account API and `authorization_token` for the download API — ' +
+  'and they hold different values, so pasting the login token alone never brings the download one with it. ' +
+  'Fix it by importing the whole cookie jar: press "Sign in" › "I\'ve signed in — Import session", or copy the ' +
+  'ENTIRE Cookie header (or a Cookie-Editor export) for uppbeat.io into the big box and press "Use this Cookie header".';
+
 function explainStatus(status, what, res) {
   if (status === 401 || status === 403) {
     return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — press ' +
@@ -367,14 +415,17 @@ function explainStatus(status, what, res) {
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
   if (status === 500 && (what === 'download' || what === 'audio')) {
-    /* Verified against the live service: api-v2-cdn answers 401 with no token
-       at all and 500 with a token that does not resolve to an account. So a
-       500 here is almost always a guest/stale session, not an Uppbeat outage —
-       every /api/v1/track/* route 500s for such a session, download included. */
-    return 'Uppbeat\'s download server returned HTTP 500 for this track. It answers 500 (not 401) when the ' +
-           'session token it receives does not resolve to a signed-in account, so this is nearly always the ' +
-           'session rather than an outage. ' + SIGNED_OUT_MSG + ' If it still 500s once the panel shows your ' +
-           'account name, use "Ingest a file": download the track on uppbeat.io yourself and let MediaRade attach the credit.';
+    /* Measured against the live service, with cache-busting so the CDN could
+       not replay a stale body: no credential at all -> a clean 401; ANY
+       `authorization_token` value it does not accept -> 500, whether that is
+       our opaque token, a well-formed JWT, or the string "abc". Only an empty
+       value drops back to 401. So a 500 means precisely "the credential we
+       sent was rejected" — it is not an Uppbeat outage and retrying will not
+       help. */
+    return 'Uppbeat\'s download API rejected this session (HTTP 500 — it returns 500 rather than 401 for a ' +
+           'credential it does not accept). Your `authorization_token` cookie is stale or was not copied from a ' +
+           'signed-in browser. Re-import the whole cookie jar via "Sign in" › "I\'ve signed in — Import session". ' +
+           'If it still fails, use "Ingest a file": download the track on uppbeat.io yourself and let MediaRade attach the credit.';
   }
   if (status === 500) {
     return 'Uppbeat returned HTTP 500 for the ' + what + ' request — its server-side error is not something ' +
@@ -437,6 +488,10 @@ function normalizeTrack(t) {
     video: !!pick(t, ['preview_video_url', 'previewVideoUrl']),
     artwork: pick(t, ['artwork', 'image', 'imageUrl', 'artist.image', 'cover', 'contributor_image']),
     musicvineTrackId: pick(t, ['musicvine_track_id', 'musicvineTrackId']),
+    /* The SFX download route is keyed on the variant, the track waveform on the
+       version — carry both so resolveDownload never has to guess. */
+    variantId: pick(t, ['sfx_variant_id', 'variant_id', 'sfxVariantId', 'variantId']),
+    versionId: pick(t, ['track_version_id', 'version_id', 'trackVersionId']),
     page: slug ? (String(slug).indexOf('http') === 0 ? String(slug)
       : (t.asset_type && t.asset_type.indexOf('lut') !== -1 ? BASE + '/motion-graphics/' + slug
         : (t.asset_type === 'motiongraphic' ? BASE + '/motion-graphics/' + slug
@@ -930,18 +985,28 @@ export const Uppbeat = {
       a `name=value` pair (e.g. `authorization_token=…`), route it through the
       full cookie parser so the name you supplied is preserved exactly.
 
-      This is a NARROW escape hatch, not the recommended route: Uppbeat issues
-      an `auth_token` to signed-out visitors as well, so a token pasted from a
-      browser that was not signed in produces a guest session that reads as the
-      free plan and 500s on download. The plan check afterwards is what catches
-      that — it now marks the session signed-out instead of quietly saying
-      "free". Prefer pasting the whole Cookie header. */
+      `auth_token` and `authorization_token` are TWO DIFFERENT COOKIES with
+      different values, and this used to copy the pasted value into both. That
+      guess was actively harmful. Verified against the live service:
+        - the legacy API (prod-api) reads `auth_token`; the V2 download API
+          (api-v2-cdn) ignores it completely — auth_token alone answers 401;
+        - the V2 API reads `authorization_token`, and returns 500 rather than
+          401 for ANY value it does not recognise (an opaque token, a
+          well-formed JWT, even the string "abc" — only an EMPTY value gives a
+          clean 401). That is Uppbeat's bug, but we were feeding it.
+      So minting a fake `authorization_token` guaranteed the HTTP 500 on every
+      download. We now write only what we were actually given.
+
+      This is also a NARROW escape hatch, not the recommended route: the token
+      alone can sign you in and report the plan, but it cannot download,
+      because the real `authorization_token` never comes with it. Import the
+      whole cookie jar for that. */
   setAuthToken: function (token) {
     const raw = String(token == null ? '' : token)
       .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
     if (!raw) throw new Error('Paste the token value first.');
     if (raw.indexOf('=') > -1) return Uppbeat.setCookiesManually(raw);
-    session.cookies = 'auth_token=' + raw + '; authorization_token=' + raw;
+    session.cookies = 'auth_token=' + raw;
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
@@ -1371,30 +1436,52 @@ export const Uppbeat = {
   },
 
   /**
-   * Resolve the actual audio URL for a track. The rebuilt SPA downloads from
-   * api-v2-cdn.uppbeat.io/api/v1/track/{track_id}/download (or sfx_id for sound
-   * effects), which either redirects to the file, returns it directly, or hands
-   * back JSON with a link. Uppbeat gates this on the account's plan, so a
-   * 401/402/403 here is the plan or session talking, not a bug.
+   * Resolve the actual audio URL for an asset, the way Uppbeat's own SPA does:
+   *   GET /api/v1/track/{track_id}/download?format=mp3|wav
+   *   GET /api/v1/sfx/{sfx_id}/variants/{variant_id}/download?format=…
+   *   GET /api/v1/motion-graphics/{id}/download
+   * answering { url, licenseCode, licenseId, pageUrl }. `url` is the real file;
+   * licenseCode is the per-download code the credit block wants, so it is
+   * returned alongside rather than thrown away.
+   *
+   * Auth is the `authorization_token` cookie and nothing else (see
+   * sessionHeaders/v2Token). A 500 here means the credential was rejected —
+   * this API answers 401 only when no credential is presented at all.
+   * @returns {Promise<{url:string, licenseCode:string|null, pageUrl:string|null, licenseId:string|null}>}
    */
   resolveDownload: function (track) {
-    const id = track.id;
-    const url = fill(endpoints().download, { id: id });
-    /* Fail fast rather than spending a request to earn an HTTP 500: the CDN
-       download API 500s for any session that does not resolve to an account, so
-       once the plan check has told us the session is a guest one there is
-       nothing to try. `signedIn` is only false here after Uppbeat itself said
-       so — an unchecked session still gets its attempt. */
+    const ep = endpoints();
+    const kind = track.kind || 'track';
+    const isSfx = kind === 'sfx' || String(kind).indexOf('sfx') > -1;
+    const isMotion = /motion|lut/i.test(String(kind));
+
+    let tpl = ep.download;
+    if (isSfx && ep.downloadSfx) tpl = ep.downloadSfx;
+    else if (isMotion && ep.downloadMotion) tpl = ep.downloadMotion;
+    if (isSfx && !track.variantId) {
+      return Promise.reject(new Error('This sound effect is missing its variant id, which Uppbeat\'s download endpoint requires. Re-run the search so the catalogue row is refreshed.'));
+    }
+    /* The SPA maps its file-format setting to mp3/wav; anything else Uppbeat
+       does not offer here, so fall back to mp3 rather than sending junk. */
+    const want = String(Config.get('audioFormat') || 'mp3').toLowerCase();
+    const format = want === 'wav' ? 'wav' : 'mp3';
+    const url = fill(tpl, { id: track.id, variantId: track.variantId || '' }) + '?format=' + format;
+
     if (!session.cookies) {
       return Promise.reject(new Error('No Uppbeat session — press "Sign in" and import your session before downloading.'));
     }
     if (session.signedIn === false) return Promise.reject(new Error(SIGNED_OUT_MSG));
+    /* The one check that would have saved all of this: a jar holding only
+       `auth_token` cannot download, because the V2 API does not read that
+       cookie at all. Refuse with an explanation rather than earning a 500. */
+    if (!canAttemptDownload(session.cookies)) return Promise.reject(new Error(NO_V2_TOKEN_MSG));
+
     return httpGet(url, { follow: false, accept: 'application/json, audio/*, */*' })
       .then(function (res) {
         if (res.status >= 300 && res.status < 400 && res.headers.location) {
-          return res.headers.location.indexOf('http') === 0
-            ? res.headers.location
-            : BASE + res.headers.location;
+          const loc = res.headers.location.indexOf('http') === 0
+            ? res.headers.location : BASE + res.headers.location;
+          return { url: loc, licenseCode: null, pageUrl: null, licenseId: null };
         }
         if (res.status !== 200) throw new Error(explainStatus(res.status, 'download', res));
         const ct = String((res.headers && res.headers['content-type']) || '').toLowerCase();
@@ -1402,11 +1489,18 @@ export const Uppbeat = {
         let json = null;
         try { json = JSON.parse(res.body); } catch (e) { json = null; }
         if (json && typeof json === 'object') {
-          const link = pick(json, ['data.link', 'link', 'url', 'downloadUrl', 'download_url',
+          const link = pick(json, ['url', 'data.link', 'link', 'downloadUrl', 'download_url',
                                    'file', 'signedUrl', 'data.url', 'result', 'audioUrl']);
-          if (link) return String(link);
+          if (link) {
+            return {
+              url: String(link),
+              licenseCode: pick(json, ['licenseCode', 'license_code', 'data.licenseCode']) || null,
+              pageUrl: pick(json, ['pageUrl', 'page_url', 'data.pageUrl']) || null,
+              licenseId: pick(json, ['licenseId', 'license_id', 'data.licenseId']) || null
+            };
+          }
         }
-        if (audioish) return url;
+        if (audioish) return { url: url, licenseCode: null, pageUrl: null, licenseId: null };
         throw new Error('Uppbeat did not return a download URL for this track (HTTP ' + res.status +
                         ' ' + ct + '). Your plan may not cover it, or the download endpoint moved.');
       });
@@ -1418,15 +1512,26 @@ export const Uppbeat = {
    */
   download: function (track, onProgress) {
     const dir = CEP.path.join(Paths.dir('audio'), 'Uppbeat');
-    const name = U.slug(track.artist + ' - ' + track.title) + '.mp3';
+    const want = String(Config.get('audioFormat') || 'mp3').toLowerCase();
+    const ext = want === 'wav' ? 'wav' : 'mp3';
+    const name = U.slug(track.artist + ' - ' + track.title) + '.' + ext;
     const dest = Paths.unique(CEP.path.join(dir, name));
 
-    let inner = null;
-    const p = Uppbeat.resolveDownload(track).then(function (url) {
-      inner = httpDownload(url, dest, onProgress);
+    let inner = null, resolved = null;
+    const p = Uppbeat.resolveDownload(track).then(function (r) {
+      resolved = r;
+      inner = httpDownload(r.url, dest, onProgress);
       return inner;
     }).then(function (res) {
-      return Object.assign({ track: track, credit: Uppbeat.credit(track) }, res);
+      /* Uppbeat issues the licence code with the download, not with the
+         catalogue row — fold it into the track so the credit block and the
+         attribution sidecar carry the real code instead of a placeholder. */
+      const full = resolved && resolved.licenseCode
+        ? Object.assign({}, track, { licenseCode: resolved.licenseCode,
+                                     page: resolved.pageUrl || track.page })
+        : track;
+      return Object.assign({ track: full, credit: Uppbeat.credit(full),
+                             licenseCode: (resolved && resolved.licenseCode) || null }, res);
     });
 
     p.cancel = function () { if (inner && inner.cancel) inner.cancel(); };

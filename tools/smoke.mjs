@@ -479,8 +479,13 @@ check('manual cookie parser handles a Cookie-Editor JSON export',
   UB.parseManualCookies('[{"name":"auth_token","value":"xyz","domain":".uppbeat.io"}]'), 'auth_token=xyz');
 check('setAuthToken is exposed', typeof UB.setAuthToken, 'function');
 UB.setAuthToken('xyzsecret');
-check('setAuthToken stores BOTH auth_token and authorization_token',
-  UB.session().cookies, 'auth_token=xyzsecret; authorization_token=xyzsecret');
+/* It used to copy the pasted value into `authorization_token` too, on the guess
+   that one of the two names had to be right. They are different cookies with
+   different values: the V2 download API reads authorization_token and answers
+   500 (not 401) for any value it does not accept — so the fabricated cookie
+   was itself the cause of the HTTP 500 on every download. */
+check('setAuthToken no longer fabricates an authorization_token cookie',
+  UB.session().cookies, 'auth_token=xyzsecret');
 await UB.setAuthToken('authorization_token=jwtabc');
 check('setAuthToken keeps a name=value paste intact (authorization_token wins)',
   UB.session().cookies, 'authorization_token=jwtabc');
@@ -586,6 +591,62 @@ for (const [tab, collection] of [['sfx', 'sfx.v3'], ['trending', 'tracksTrending
   check('search stays a GET against the single-collection endpoint', call && call.method, 'GET');
   check('search returns normalised tracks', rows.length && rows[0].title, 'Chill FM');
 }
+
+/* --- the download credential ---------------------------------------------
+   Uppbeat uses two cookies: auth_token signs you in and reports the plan;
+   authorization_token is what the V2 download API reads. A session holding
+   only the first is exactly the "signed in, plan detected, HTTP 500 on every
+   download" state, so it must be diagnosed rather than attempted. */
+UB.clearSession();
+await UB.setAuthToken('xyzsecret');
+{
+  const before = shims.REQUESTS.length;
+  let msg = '(resolved instead of rejecting)';
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).then(() => {}, (e) => { msg = e.message; });
+  check('download is refused when only auth_token is present',
+    /authorization_token/.test(msg), true);
+  check('the refusal explains the two-cookie split rather than blaming the plan',
+    /TWO cookies/i.test(msg), true);
+  check('the hopeless request is never actually sent',
+    shims.REQUESTS.length === before, true);
+}
+
+UB.clearSession();
+await UB.setCookiesManually('auth_token=xyzsecret; authorization_token=v2jwtvalue');
+{
+  const before = shims.REQUESTS.length;
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).catch(() => {});
+  const call = shims.REQUESTS.slice(before).find((r) => /api-v2-cdn|\/download/.test(r.host + r.path));
+  check('a session carrying authorization_token does attempt the download', !!call, true);
+  check('the download call targets the V2 asset API', call && call.host, 'api-v2-cdn.uppbeat.io');
+  check('the download call sends the format query param the SPA sends',
+    !!(call && /[?&]format=(mp3|wav)/.test(call.path)), true);
+  /* The V2 client in Uppbeat's own bundle is axios({withCredentials:true}) —
+     cookies only. Adding a token header turns a truthful 401 into a 500. */
+  check('the V2 call sends cookies only, no Authorization header',
+    !!(call && call.headers.Cookie && !call.headers.Authorization && !call.headers['X-Auth-Token']), true);
+}
+{
+  const before = shims.REQUESTS.length;
+  await UB.resolveDownload({ id: '87094', kind: 'sfx', variantId: '90210' }).catch(() => {});
+  const call = shims.REQUESTS.slice(before).find((r) => /\/download/.test(r.path));
+  check('an SFX download uses the variants route Uppbeat requires',
+    !!(call && /\/api\/v1\/sfx\/87094\/variants\/90210\/download/.test(call.path)), true);
+}
+await UB.resolveDownload({ id: '87094', kind: 'sfx' }).then(
+  () => check('an SFX row with no variant id fails loudly', 'resolved', 'rejected'),
+  (e) => check('an SFX row with no variant id fails loudly', /variant id/.test(e.message), true));
+/* prod-api still needs the header form, so the gating must be per-host. */
+{
+  const before = shims.REQUESTS.length;
+  await UB.me().catch(() => {});
+  const call = shims.REQUESTS.slice(before).find((r) => /setup_frontend/.test(r.path));
+  check('the account API still gets the X-Auth-Token header',
+    !!(call && call.headers['X-Auth-Token'] === 'xyzsecret'), true);
+  check('the account API is sent auth_token, never authorization_token, as the token',
+    call && call.headers['X-Auth-Token'], 'xyzsecret');
+}
+UB.clearSession();
 
 function b64url(s) { return Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 const creatorJwt = b64url('{"alg":"HS512"}') + '.' +
