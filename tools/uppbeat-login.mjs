@@ -41,8 +41,10 @@ const API_BASE = 'https://prod-api.uppbeat.io';
 /* The rebuilt SPA serves account/plan state from /api/setup_frontend. A real
    browser shares the .uppbeat.io session cookies with the prod-api subdomain,
    so a plain credentials:'include' fetch is authenticated. The body (not the
-   HTTP status) tells us whether the session is valid: `auth_token` truthy +
-   `user.is_authenticated` = signed in. */
+   HTTP status) tells us whether the session is valid, and only one field in it
+   does: `user.is_authenticated`. Top-level `auth_token` is a decoy — Uppbeat
+   issues a token to signed-out visitors and echoes back whatever token cookie
+   it is handed, so it reads true for guests and for values it never issued. */
 const ACCOUNT_PATH = API_BASE + '/api/setup_frontend?fev=uppbeat-next@1.1.18';
 
 const CHROME_CANDIDATES = [
@@ -210,7 +212,12 @@ const ME_JS = `(async () => {
     const r = await fetch(${JSON.stringify(ACCOUNT_PATH)}, { credentials: 'include', headers: h });
     let json = null;
     try { json = await r.json(); } catch (e) {}
-    const signedIn = !!(json && (json.auth_token || (json.user && json.user.is_authenticated)));
+    /* Top-level \`auth_token\` is NOT a login signal — Uppbeat sets it true for
+       any token cookie, including one it never issued, so testing it declared
+       success for signed-out guest sessions. The account lives at
+       \`user.user\` and only \`user.is_authenticated\` answers the question. */
+    const w = json && json.user;
+    const signedIn = !!(w && (w.is_authenticated === true || (w.user && (w.user.email || w.user.id))));
     return { status: r.status, signedIn: signedIn, json: json };
   } catch (e) {
     return { status: 0, json: null, signedIn: false };
@@ -816,7 +823,8 @@ async function run() {
     await evaluate(cdp, pageSession, CLICK_SUBMIT_JS);
 
     /* 4) Wait for the login to stick: setup_frontend answering signedIn=true
-       is definitive (the body carries auth_token / user.is_authenticated). */
+       is definitive (ME_JS reads user.is_authenticated, the only field that
+       distinguishes an account from a guest token). */
     let me = null;
     for (;;) {
       if (Date.now() - startedAt > remaining) break;
