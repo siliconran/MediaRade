@@ -99,7 +99,13 @@ export function UppbeatView() {
       Modal.close();
       syncSession();
       const who = (s.account && (s.account.name || s.account.email)) || 'Session imported';
-      if (s.planError) {
+      if (s.signedIn === false) {
+        /* Uppbeat answered and said this session is not an account — a guest
+           token, or an expired one. Saying "signed in, plan check failed" here
+           sent people hunting for a plan bug when the session never logged in. */
+        Toast.err('Not signed in', s.planError ||
+          'Uppbeat does not recognise that session. Sign in at uppbeat.io first, then import.');
+      } else if (s.planError) {
         Toast.err('Signed in — plan check failed', who + ' — ' + s.planError +
           (s.plan === 'free' ? ' Tick "this account is paid" if this is a paid plan.' : ''));
       } else {
@@ -122,16 +128,22 @@ export function UppbeatView() {
       });
     });
 
-    /* Dedicated field for the one cookie that carries the login. */
+    /* A single auth_token is a weak escape hatch, not the good route: Uppbeat
+       hands one to signed-out visitors too, so a token copied from a browser
+       that wasn't logged in yields a guest session — free plan, HTTP 500 on
+       every download. Say so, and prefer the whole Cookie header below. */
     const tokenIn = U.el('input', { class: 'ps2-input', type: 'text',
       placeholder: 'the auth_token / authorization_token value',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
-    const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
-      text: 'Use token', title: 'For when the browser import can\'t read cookies — paste the auth_token or authorization_token value from Cookie Editor or DevTools',
+    const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
+      text: 'Use token', title: 'Last resort. Copy it only from a browser tab that is signed in to uppbeat.io — Uppbeat also issues an auth_token to signed-out visitors, and that one reads as the free plan and fails every download. The whole Cookie header below is more reliable.',
       style: { marginTop: '6px' } });
     tokenBtn.addEventListener('click', function () {
       try {
-        Uppbeat.setAuthToken(tokenIn.value).then(withSession);
+        setStatus('Checking that token with Uppbeat…', '');
+        Uppbeat.setAuthToken(tokenIn.value).then(withSession, function (e) {
+          setStatus('Could not use that token: ' + e.message, 'err');
+        });
       } catch (e) {
         setStatus('Could not use that token: ' + e.message, 'err');
       }
@@ -171,12 +183,15 @@ export function UppbeatView() {
       placeholder: 'or paste the whole Cookie header / Cookie-Editor export here',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' }
     });
-    const manualBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
+    const manualBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
       text: 'Use this Cookie header', style: { marginTop: '6px' } });
 
     manualBtn.addEventListener('click', function () {
       try {
-        Uppbeat.setCookiesManually(manualText.value).then(withSession);
+        setStatus('Checking those cookies with Uppbeat…', '');
+        Uppbeat.setCookiesManually(manualText.value).then(withSession, function (e) {
+          setStatus('That cookie was not accepted: ' + e.message, 'err');
+        });
       } catch (e) {
         setStatus('That cookie was not accepted: ' + e.message, 'err');
       }

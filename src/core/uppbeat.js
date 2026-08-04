@@ -222,7 +222,9 @@ function sessionHeaders(extra) {
 }
 
 /**
- * GET a URL with the imported Uppbeat session attached.
+ * Fetch a URL with the imported Uppbeat session attached. Defaults to GET;
+ * pass `{ method:'POST', body:'…' }` for the endpoints that need it (the
+ * Typesense multi_search browse call is POST-only — it 404s on GET).
  * @returns {Promise<{status:number, headers:object, body:string}>}
  */
 function httpGet(url, opts) {
@@ -233,15 +235,25 @@ function httpGet(url, opts) {
     catch (e) { return reject(new Error('Node is unavailable in this panel, so Uppbeat cannot be reached.')); }
 
     const parsed = urlmod.parse(url);
+    const method = String(opts.method || 'GET').toUpperCase();
+    const body = opts.body == null ? null : String(opts.body);
     const headers = sessionHeaders(Object.assign(
       { 'Accept': opts.accept || 'application/json, text/plain, */*' },
       opts.headers || {}
     ));
+    if (body !== null) {
+      /* Byte length, not character count — a track title with an emoji in it
+         would otherwise under-declare the body and hang the request. */
+      let len = body.length;
+      try { len = CEP.require('buffer').Buffer.byteLength(body); } catch (e) {}
+      headers['Content-Length'] = len;
+    }
 
-    const req = https.get({
+    const req = https.request({
       protocol: parsed.protocol,
       hostname: parsed.hostname,
       path: parsed.path,
+      method: method,
       headers: headers,
       timeout: opts.timeout || 25000
     }, function (res) {
@@ -252,7 +264,15 @@ function httpGet(url, opts) {
         const next = res.headers.location.indexOf('http') === 0
           ? res.headers.location
           : BASE + res.headers.location;
-        return resolve(httpGet(next, Object.assign({}, opts, { depth: (opts.depth || 0) + 1 })));
+        /* 307/308 preserve the method and body; everything else turns into a
+           GET, so the body must be dropped or the next hop declares a
+           Content-Length it never sends. */
+        const keep = res.statusCode === 307 || res.statusCode === 308;
+        return resolve(httpGet(next, Object.assign({}, opts, {
+          depth: (opts.depth || 0) + 1,
+          method: keep ? method : 'GET',
+          body: keep ? opts.body : null
+        })));
       }
       let body = '';
       res.setEncoding('utf8');
@@ -264,6 +284,8 @@ function httpGet(url, opts) {
 
     req.on('timeout', function () { req.destroy(new Error('Uppbeat timed out.')); });
     req.on('error', reject);
+    if (body !== null) req.write(body);
+    req.end();
   });
 }
 
@@ -329,6 +351,15 @@ function httpDownload(url, destPath, onProgress, depth) {
   return p;
 }
 
+/* What to tell the user when Uppbeat has answered but the answer is "this
+   session does not belong to an account". Shared so the plan check and the
+   download path tell the same story. */
+const SIGNED_OUT_MSG =
+  'Uppbeat does not recognise this session as signed in. An `auth_token` on its own is not enough — ' +
+  'Uppbeat hands one out to signed-out visitors too, so pasting just that value logs you in as a guest ' +
+  '(guest sessions read as the free plan and 500 on download). Press "Sign in" and import the whole ' +
+  'cookie set while signed in at uppbeat.io, or paste the full Cookie header rather than the token alone.';
+
 function explainStatus(status, what, res) {
   if (status === 401 || status === 403) {
     return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — press ' +
@@ -336,10 +367,14 @@ function explainStatus(status, what, res) {
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
   if (status === 500 && (what === 'download' || what === 'audio')) {
-    return 'Uppbeat\'s download server threw an error (HTTP 500) while resolving this track. This happens ' +
-           'when the stored session token is not the JWT the download API requires, or the session is stale. ' +
-           'Re-import the session while signed in at uppbeat.io (Sign in › Import session), then retry. ' +
-           'If it still 500s, use "Ingest a file": download the track on uppbeat.io yourself and let MediaRade attach the credit.';
+    /* Verified against the live service: api-v2-cdn answers 401 with no token
+       at all and 500 with a token that does not resolve to an account. So a
+       500 here is almost always a guest/stale session, not an Uppbeat outage —
+       every /api/v1/track/* route 500s for such a session, download included. */
+    return 'Uppbeat\'s download server returned HTTP 500 for this track. It answers 500 (not 401) when the ' +
+           'session token it receives does not resolve to a signed-in account, so this is nearly always the ' +
+           'session rather than an outage. ' + SIGNED_OUT_MSG + ' If it still 500s once the panel shows your ' +
+           'account name, use "Ingest a file": download the track on uppbeat.io yourself and let MediaRade attach the credit.';
   }
   if (status === 500) {
     return 'Uppbeat returned HTTP 500 for the ' + what + ' request — its server-side error is not something ' +
@@ -463,11 +498,80 @@ function readPlan(acct) {
   return truthy(premiumFlag) ? 'premium' : 'free';
 }
 
+/* --- the setup_frontend envelope ------------------------------------------
+   The live shape (verified against prod-api) nests auth state one level
+   deeper than the account itself:
+
+     { user: { auth_token: <bool>, token: '<opaque hex>',
+               user: {…the actual account…} | null,
+               is_authenticated: <bool> },
+       auth_token: <bool>,
+       subscriptionData: [] | [{…}],       <- TOP level, not under `user`
+       credits: {…}, preferences: {…}, … }
+
+   Two traps live in there, and MediaRade fell into both:
+
+   1. Top-level `auth_token` is not an answer. Uppbeat sets it true whenever a
+      token cookie was sent — including a value it has never issued (a made-up
+      128-char string comes back as `auth_token: true`, `is_authenticated:
+      false`). Only `user.is_authenticated` / a non-null `user.user` means
+      "this session belongs to an account".
+   2. `json.user` is the auth WRAPPER, not the account. Reading the plan off it
+      finds nothing, which is why a Creator account reported as free — and the
+      plan fields it should have read (`subscriptionData`) are not in there at
+      all, they sit at the top level.                                         */
+
+/** Merge the plan-bearing top-level fields into the account object so
+    `readPlan` sees them, since they do not travel with the account. */
+function planSource(json, acct) {
+  const merged = Object.assign({}, acct || {});
+  const sub = json && json.subscriptionData;
+  if (Array.isArray(sub)) {
+    /* A free account gets `subscriptionData: []`. Anything in that array means
+       a subscription exists, so treat its mere presence as paid even if the
+       object inside uses field names readPlan does not recognise — better to
+       name the plan 'premium' than to charge a paying user the free-plan
+       credit obligation. A named plan below still wins over this. */
+    if (sub.length) { merged.subscriptionData = sub[0]; merged.hasPaidSubscription = true; }
+  } else if (sub && typeof sub === 'object') {
+    merged.subscriptionData = sub;
+    if (Object.keys(sub).length) merged.hasPaidSubscription = true;
+  }
+  if (json && json.subscription && typeof json.subscription === 'object') {
+    merged.subscription = merged.subscription || json.subscription;
+  }
+  return merged;
+}
+
+/** Pull { authed, account, plan } out of whichever envelope Uppbeat used.
+    Tolerates the older flat shape (account straight under `user`/`data`/root)
+    so a changed response does not silently read as signed-out. */
+function unwrapAccount(json) {
+  if (!json || typeof json !== 'object') return { authed: false, account: null, plan: {} };
+  const wrap = json.user && typeof json.user === 'object' && !Array.isArray(json.user) ? json.user : null;
+
+  let acct = null;
+  if (wrap && wrap.user && typeof wrap.user === 'object') acct = wrap.user;         // real envelope
+  else if (wrap && (wrap.email || wrap.id)) acct = wrap;                            // flat envelope
+  else if (json.data && typeof json.data === 'object' && (json.data.email || json.data.id)) acct = json.data;
+  else if (json.email || json.id) acct = json;
+
+  let authed;
+  if (wrap && typeof wrap.is_authenticated === 'boolean') authed = wrap.is_authenticated;
+  else if (typeof json.is_authenticated === 'boolean') authed = json.is_authenticated;
+  else authed = !!(acct && (acct.email || acct.id));
+  /* `is_authenticated: true` with no account attached is not a login. */
+  if (!acct) authed = false;
+
+  return { authed: authed, account: acct, plan: planSource(json, acct) };
+}
+
 function storeToken(json) {
-  /* setup_frontend reports `auth_token` as a boolean (false when logged out)
-     or the real token string when signed in. Only keep actual token strings,
-     never the boolean representation. */
-  let v = String((json && (json.auth_token || json.token)) || '').trim();
+  /* The session token lives at `user.token` on the real envelope. Top-level
+     `auth_token` is only ever a boolean ("a token cookie was present"), so it
+     must never be stored as the token itself. */
+  const wrap = json && json.user && typeof json.user === 'object' ? json.user : null;
+  let v = String((json && ((wrap && wrap.token) || json.token || json.auth_token)) || '').trim();
   if (v === 'true' || v === 'false' || v.length < 8) v = '';
   session.token = v;
 }
@@ -505,8 +609,13 @@ function jwtPayload(token) {
 
 /** Read the plan straight from the auth token's own claims (role/permissions).
     Returns a plan name ('creator', 'premium', …) or '' when the cookies hold no
-    decodable token. This is what makes a manually pasted key fully work without
-    opening Chrome or reaching an API. */
+    decodable token.
+
+    NOTE: Uppbeat's current `auth_token` is a 128-char opaque hex string, NOT a
+    JWT, so this returns '' for a real live token and the caller falls through
+    to the account endpoint. It is kept because it costs nothing and settles the
+    plan offline if Uppbeat ever signs its claims again — but nothing may depend
+    on it working. A pasted token can never settle the plan on its own today. */
 function planFromToken(cookies) {
   const m = String(cookies || '').match(/(?:^|;\s*)(auth_token|authorization_token)=([^;]+)/i);
   if (!m) return '';
@@ -819,7 +928,14 @@ export const Uppbeat = {
       actually reads, so write the value under BOTH names (the server uses
       whichever is right and ignores the other). If the pasted text is already
       a `name=value` pair (e.g. `authorization_token=…`), route it through the
-      full cookie parser so the name you supplied is preserved exactly. */
+      full cookie parser so the name you supplied is preserved exactly.
+
+      This is a NARROW escape hatch, not the recommended route: Uppbeat issues
+      an `auth_token` to signed-out visitors as well, so a token pasted from a
+      browser that was not signed in produces a guest session that reads as the
+      free plan and 500s on download. The plan check afterwards is what catches
+      that — it now marks the session signed-out instead of quietly saying
+      "free". Prefer pasting the whole Cookie header. */
   setAuthToken: function (token) {
     const raw = String(token == null ? '' : token)
       .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
@@ -903,14 +1019,16 @@ export const Uppbeat = {
               || 'Chrome login did not complete.';
           throw new Error(err);
         }
-        const acct = out.me && (out.me.user || out.me.data || out.me);
+        const info = unwrapAccount(out.me);
         session.cookies = out.cookies || '';
         storeToken(out.me);
-        session.account = acct ? {
+        if (!info.authed) throw new Error('Chrome finished the login but Uppbeat still reports the session as signed out. ' + SIGNED_OUT_MSG);
+        const acct = info.account;
+        session.account = {
           email: pick(acct, ['email', 'user.email']),
           name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
-        } : null;
-        session.plan = acct ? (readPlan(acct) || 'free') : 'free';
+        };
+        session.plan = readPlan(info.plan) || 'free';
         session.planError = null;
         session.signedIn = true;
         session.importedAt = Date.now();
@@ -921,12 +1039,13 @@ export const Uppbeat = {
   },
 
   /**
-   * Re-check the stored session's plan through a real Chrome window. The panel
-   * Node HTTP client is always 429'd by Uppbeat's Vercel checkpoint, so the
-   * only client that can answer "what plan is this session" is a real browser:
-   * we hand it the current cookies, let Chrome pass the checkpoint, and it
-   * fetches /api/v1/me for us. Returns the session (with planError set if it
-   * could not be verified).
+   * Re-check the stored session's plan through a real Chrome window: hand it
+   * the current cookies, let Chrome pass the Vercel checkpoint on uppbeat.io,
+   * and have it fetch the account endpoint same-origin. This is the FALLBACK
+   * for when the direct call fails — prod-api answers plain Node fine, so
+   * `refreshPlan` tries `me()` first and only pays for Chrome if that breaks.
+   * Returns the session (signed-out, with planError set, if Uppbeat says the
+   * cookies do not belong to an account).
    */
   verifyInBrowser: function () {
     if (!session.cookies) return Promise.reject(new Error('No Uppbeat session to verify — sign in first.'));
@@ -946,17 +1065,21 @@ export const Uppbeat = {
           const err = (out && out.error) || 'The plan check did not complete.';
           throw new Error(err);
         }
-        const acct = out.me && (out.me.user || out.me.data || out.me);
+        const info = unwrapAccount(out.me);
         storeToken(out.me);
-        if (acct) {
-          session.account = {
-            email: pick(acct, ['email', 'user.email']),
-            name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
-          };
-          session.plan = readPlan(acct) || 'free';
-        } else {
+        if (!info.authed) {
+          session.signedIn = false;
+          session.account = null;
           session.plan = 'free';
+          session.planError = SIGNED_OUT_MSG;
+          Uppbeat.saveSession();
+          return session;
         }
+        session.account = {
+          email: pick(info.account, ['email', 'user.email']),
+          name: pick(info.account, ['name', 'displayName', 'username', 'firstName'])
+        };
+        session.plan = readPlan(info.plan) || 'free';
         session.planError = null;
         session.signedIn = true;
         Uppbeat.saveSession();
@@ -965,12 +1088,16 @@ export const Uppbeat = {
     });
   },
 
-  /** Best-effort plan refresh. The pasted auth_token is a JWT whose claims
-      already carry the role (role/permissions), so we decode it locally first —
-      that is authoritative, costs nothing, and never opens a browser. Only if
-      the token is not a decodable JWT do we fall back to the real-browser
-      verify (Vercel checkpoint) and then the direct Node call (which the edge
-      usually 429s). */
+  /** Best-effort plan refresh.
+
+      Order matters and it is the opposite of what it used to be. The Vercel
+      checkpoint that 429s plain HTTP clients guards uppbeat.io itself, NOT
+      prod-api.uppbeat.io — the account endpoint answers 200 to ordinary Node,
+      so `me()` is the cheap, accurate first choice and opening Chrome is the
+      fallback for when it genuinely cannot be reached. Going to the browser
+      first cost seconds and, worse, its old success test accepted a guest
+      session as signed in. A locally decodable JWT still short-circuits both,
+      though live Uppbeat tokens are opaque so that path rarely fires. */
   refreshPlan: function () {
     const local = planFromSession(session.cookies);
     if (local) {
@@ -980,8 +1107,17 @@ export const Uppbeat = {
       Uppbeat.saveSession();
       return Promise.resolve(session);
     }
-    return Uppbeat.verifyInBrowser()
-      .catch(function () { return Uppbeat.me().catch(function () { return session; }); });
+    return Uppbeat.me().then(function (s) {
+      /* me() resolves even when it failed, recording why in planError. Only a
+         transport failure is worth paying for a browser round-trip; a clean
+         "you are not signed in" is a final answer. */
+      if (s && s.planError && s.planError !== SIGNED_OUT_MSG) {
+        return Uppbeat.verifyInBrowser().catch(function () { return s; });
+      }
+      return s;
+    }, function () {
+      return Uppbeat.verifyInBrowser().catch(function () { return session; });
+    });
   },
 
   /** Manual plan override — for when Uppbeat won't report the account level
@@ -1080,33 +1216,33 @@ export const Uppbeat = {
   /** Account + plan. Used to decide whether the credit banner is mandatory. */
   me: function () {
     return Uppbeat.json(endpoints().account, 'account').then(function (json) {
-      /* setup_frontend nests the real account under `user` only when
-         authenticated; otherwise it is `{ is_authenticated: false }`. */
-      const acct = json && (json.user || json.data || json);
-      const authed = acct && (acct.is_authenticated || acct.email || acct.id);
-      if (!authed) {
-        /* setup_frontend answering auth_token:false / is_authenticated:false is
-           definitive — the stored session no longer logs in. Mark it signed-out
-           so the UI shows the Sign-in gate instead of a session that 500s on
-           every download. (Network errors take the error handler below, not
-           this branch: a 200 with is_authenticated:false is an answer.) */
+      const info = unwrapAccount(json);
+      storeToken(json);
+      if (!info.authed) {
+        /* A 200 carrying is_authenticated:false is an answer, not a failure:
+           the session is a guest one (or expired). Mark it signed-out so the UI
+           shows the Sign-in gate instead of a session that reads free and 500s
+           on every download. Network errors take the handler below instead. */
         session.signedIn = false;
         session.plan = 'free';
         session.account = null;
-        session.planError = 'The stored session has expired — Uppbeat no longer recognises it. Sign in again and import the session.';
+        session.planError = SIGNED_OUT_MSG;
         Uppbeat.saveSession();
-        try { Paths.log('uppbeat: stored session not recognised — marked signed-out'); } catch (x) {}
+        try { Paths.log('uppbeat: session is not signed in (setup_frontend is_authenticated=false) — marked signed-out'); } catch (x) {}
         return session;
       }
+      const acct = info.account;
       session.account = {
         email: pick(acct, ['email', 'user.email']),
         name: pick(acct, ['name', 'displayName', 'username', 'firstName'])
       };
-      storeToken(json);
-      session.plan = readPlan(acct) || 'free';
+      /* readPlan gets the MERGED view (account + top-level subscriptionData),
+         not the bare account — the plan fields do not travel with the account. */
+      session.plan = readPlan(info.plan) || 'free';
       session.planError = null;
       session.signedIn = true;
       Uppbeat.saveSession();
+      try { Paths.log('uppbeat: signed in as ' + (session.account.email || '?') + ' — plan ' + session.plan); } catch (x) {}
       return session;
     }, function (e) {
       /* Don't pretend a failed account check means "free" — surface it so the
@@ -1244,6 +1380,15 @@ export const Uppbeat = {
   resolveDownload: function (track) {
     const id = track.id;
     const url = fill(endpoints().download, { id: id });
+    /* Fail fast rather than spending a request to earn an HTTP 500: the CDN
+       download API 500s for any session that does not resolve to an account, so
+       once the plan check has told us the session is a guest one there is
+       nothing to try. `signedIn` is only false here after Uppbeat itself said
+       so — an unchecked session still gets its attempt. */
+    if (!session.cookies) {
+      return Promise.reject(new Error('No Uppbeat session — press "Sign in" and import your session before downloading.'));
+    }
+    if (session.signedIn === false) return Promise.reject(new Error(SIGNED_OUT_MSG));
     return httpGet(url, { follow: false, accept: 'application/json, audio/*, */*' })
       .then(function (res) {
         if (res.status >= 300 && res.status < 400 && res.headers.location) {

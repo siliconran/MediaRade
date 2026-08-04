@@ -115,26 +115,70 @@ function makeShims(win) {
     return child;
   }
 
+  /* The Uppbeat account check answers with the REAL setup_frontend envelope:
+     the account is nested at user.user (user itself is only the auth wrapper),
+     and the plan lives in a TOP-LEVEL subscriptionData array. The mock used to
+     use a flattened shape the live API never sends, which is exactly why a
+     Creator account read as free in the panel while the tests stayed green.
+
+     ACCOUNT_MODE flips between a signed-in Creator and the guest response
+     Uppbeat gives anyone holding a bare auth_token, so both can be asserted. */
+  const CREATOR_BODY = {
+    user: {
+      auth_token: true,
+      token: 'c8730e0e96df2c17da03fb7c3311a6cfbe8c1fabcec8fd12cd498c07ec4e3ec8',
+      user: { id: 42, email: 'pro@uppbeat.fake', name: 'Pro User' },
+      is_authenticated: true
+    },
+    auth_token: true,
+    subscriptionData: [{ plan: 'creator', is_active: true }],
+    credits: { credits_current: 0, credits_max: 3 }
+  };
+  /* Verified against the live API: a token Uppbeat has never issued still comes
+     back with auth_token:true — it only means "a token cookie was sent". */
+  const GUEST_BODY = {
+    user: { auth_token: true, token: 'deadbeef'.repeat(16), user: null, is_authenticated: false },
+    auth_token: true,
+    subscriptionData: [],
+    credits: { credits_current: 0, credits_max: 3 }
+  };
+  const ACCOUNT_MODE = { value: 'creator' };
+  const ACCOUNT_BODY = () => (ACCOUNT_MODE.value === 'guest' ? GUEST_BODY : CREATOR_BODY);
+
+  /* Typesense answers a single search under `hits` and a multi_search under
+     `results[].hits` — browse reads the second shape, search the first. */
+  const DOC = { asset_type: 'track', track_id: 13902, id: '13902', track_slug: 'chill-fm',
+                name: 'Chill FM', contributor_name: 'Dope Cat', contributor_slug: 'dope-cat',
+                is_premium: false, version_length: 132, tempo: 90 };
+  const SEARCH_BODY = (opts) => (/multi_search/.test(String(opts.path || ''))
+    ? { results: [{ found: 1, hits: [{ document: DOC }] }] }
+    : { found: 1, hits: [{ document: DOC }] });
+  const REQUESTS = [];
+
   const modules = {
     path, fs,
     os: { homedir: () => 'C:\\Users\\dev', platform: () => 'win32' },
     child_process: { spawn: (exe, args) => fakeChild(args) },
-    https: {
-      get: (opts, cb) => {
-        /* Respond to the Uppbeat account check like the live API would — a
-           Creator account with the plan nested under subscription.plan. */
+    https: (() => {
+      /* The panel drives this with https.request (it needs POST for the
+         Typesense multi_search browse call, which 404s on GET). `get` stays as
+         a thin alias so the shim mirrors the real module. */
+      const request = (opts, cb) => {
+        REQUESTS.push({ method: (opts.method || 'GET').toUpperCase(),
+                        host: opts.hostname, path: opts.path, headers: opts.headers, body: '' });
+        const rec = REQUESTS[REQUESTS.length - 1];
         const res = new EventEmitter();
         res.statusCode = 200;
         res.headers = { 'content-length': '2' };
         res.setEncoding = () => {};
-        cb(res);
-        const body = JSON.stringify({
-          user: { email: 'pro@uppbeat.fake', name: 'Pro User', subscription: { plan: 'creator' } }
-        });
-        setTimeout(() => { res.emit('data', body); res.emit('end'); }, 1);
-        return { on() {}, destroy() {} };
-      }
-    },
+        const body = /typesense/.test(String(opts.hostname || ''))
+          ? JSON.stringify(SEARCH_BODY(opts))
+          : JSON.stringify(ACCOUNT_BODY());
+        setTimeout(() => { cb(res); setTimeout(() => { res.emit('data', body); res.emit('end'); }, 1); }, 1);
+        return { on() {}, destroy() {}, write(b) { rec.body += b; }, end() {} };
+      };
+      return { request, get: (opts, cb) => request(Object.assign({}, opts, { method: 'GET' }), cb) };
+    })(),
     url: { parse: (u) => { const x = new URL(u); return { protocol: x.protocol, hostname: x.hostname, path: x.pathname + x.search }; } }
   };
 
@@ -159,7 +203,7 @@ function makeShims(win) {
     addEventListener() {}, removeEventListener() {}, invokeSync: () => '', resizeContent() {}
   };
 
-  return { FILES, DIRS, SPAWNED };
+  return { FILES, DIRS, SPAWNED, ACCOUNT_MODE, REQUESTS };
 }
 
 /* --- boot ------------------------------------------------------------------ */
@@ -485,7 +529,63 @@ await UB.setAuthToken('xyzsecret');
 check('auth_token re-checks the plan against the account endpoint', UB.session().plan, 'creator');
 check('a Creator account is recognised as premium (was showing free)',
   UB.isPremium(), true);
+check('the account is read from user.user, not the auth wrapper',
+  UB.session().account.email, 'pro@uppbeat.fake');
+check('the session token is read from user.token, not the auth_token boolean',
+  UB.session().token, 'c8730e0e96df2c17da03fb7c3311a6cfbe8c1fabcec8fd12cd498c07ec4e3ec8');
 UB.clearSession();
+
+/* A guest session is what you get from pasting an auth_token copied while
+   signed OUT — the exact state that made the panel report "free" and then 500
+   on every download. It must read as signed-out, never as a free account. */
+{
+  shims.ACCOUNT_MODE.value = 'guest';
+  const beforeSpawns = shims.SPAWNED.length;
+  await UB.setAuthToken('guestsecret');
+  check('a guest session (is_authenticated:false) is NOT treated as signed in',
+    UB.session().signedIn, false);
+  check('a guest session is not premium', UB.isPremium(), false);
+  check('a guest session reports why instead of silently reading free',
+    /not recognise this session as signed in/.test(UB.session().planError || ''), true);
+  check('a guest session does not fall through to opening Chrome',
+    shims.SPAWNED.length === beforeSpawns, true);
+  await UB.resolveDownload({ id: '13902' }).then(
+    () => check('a guest session refuses to download', 'resolved', 'rejected'),
+    (e) => check('a guest session refuses to download before spending a request',
+      /No Uppbeat session|not recognise this session/.test(e.message), true));
+  shims.ACCOUNT_MODE.value = 'creator';
+  UB.clearSession();
+}
+
+/* browse() builds a Typesense multi_search, which is POST-only — Typesense
+   404s a GET /multi_search. The panel's HTTP helper used to ignore `method`
+   and `body` entirely, so every browse tab silently returned nothing. */
+{
+  const before = shims.REQUESTS.length;
+  const rows = await UB.browse('music');
+  const call = shims.REQUESTS.slice(before).find((r) => /multi_search/.test(r.path));
+  check('browse sends multi_search as POST, not GET', call && call.method, 'POST');
+  check('browse actually sends the searches body',
+    !!(call && JSON.parse(call.body).searches[0].collection === 'tracks.v3'), true);
+  check('browse declares a Content-Length for the body',
+    !!(call && Number(call.headers['Content-Length']) === call.body.length), true);
+  check('browse reads results[].hits and returns tracks', rows.length, 1);
+  check('browse keeps the asset id the download endpoint needs', rows[0].id, '13902');
+}
+for (const [tab, collection] of [['sfx', 'sfx.v3'], ['trending', 'tracksTrending'], ['luts', 'motiongraphics.v2']]) {
+  const before = shims.REQUESTS.length;
+  await UB.browse(tab);
+  const call = shims.REQUESTS.slice(before).find((r) => /multi_search/.test(r.path));
+  check('browse "' + tab + '" queries the ' + collection + ' collection over POST',
+    call && call.method === 'POST' && JSON.parse(call.body).searches[0].collection === collection, true);
+}
+{
+  const before = shims.REQUESTS.length;
+  const rows = await UB.search('chill');
+  const call = shims.REQUESTS.slice(before).find((r) => /documents\/search/.test(r.path));
+  check('search stays a GET against the single-collection endpoint', call && call.method, 'GET');
+  check('search returns normalised tracks', rows.length && rows[0].title, 'Chill FM');
+}
 
 function b64url(s) { return Buffer.from(s).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 const creatorJwt = b64url('{"alg":"HS512"}') + '.' +
