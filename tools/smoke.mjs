@@ -478,6 +478,8 @@ check('manual cookie parser handles line-separated pairs',
 check('manual cookie parser handles a Cookie-Editor JSON export',
   UB.parseManualCookies('[{"name":"auth_token","value":"xyz","domain":".uppbeat.io"}]'), 'auth_token=xyz');
 check('setAuthToken is exposed', typeof UB.setAuthToken, 'function');
+check('setAuthorizationToken is exposed (separate download credential)',
+  typeof UB.setAuthorizationToken, 'function');
 UB.setAuthToken('xyzsecret');
 /* It used to copy the pasted value into `authorization_token` too, on the guess
    that one of the two names had to be right. They are different cookies with
@@ -486,12 +488,25 @@ UB.setAuthToken('xyzsecret');
    was itself the cause of the HTTP 500 on every download. */
 check('setAuthToken no longer fabricates an authorization_token cookie',
   UB.session().cookies, 'auth_token=xyzsecret');
+check('a bare non-JWT auth_token fills only the account field',
+  UB.session().authToken, 'xyzsecret');
+check('a bare non-JWT auth_token leaves the download field empty',
+  UB.session().authorizationToken, '');
 await UB.setAuthToken('authorization_token=jwtabc');
 check('setAuthToken keeps a name=value paste intact (authorization_token wins)',
   UB.session().cookies, 'authorization_token=jwtabc');
+check('name=value authorization_token populates the download field',
+  UB.session().authorizationToken, 'jwtabc');
 await UB.setAuthToken('auth_token=short');
 check('setAuthToken keeps a name=value paste intact (auth_token wins)',
   UB.session().cookies, 'auth_token=short');
+UB.clearSession();
+/* A pasted auth JWT must enable BOTH APIs: it names the plan from its claims
+   AND doubles as the download credential (Uppbeat accepts it as a Bearer token
+   for the V2 download API). */
+await UB.setAuthorizationToken('v2jwtvalue');
+check('setAuthorizationToken sets the download credential without touching auth',
+  UB.session().authorizationToken, 'v2jwtvalue');
 UB.clearSession();
 check('setPlan is exposed', typeof UB.setPlan, 'function');
 UB.setAuthToken('xyzsecret');
@@ -621,10 +636,14 @@ await UB.setCookiesManually('auth_token=xyzsecret; authorization_token=v2jwtvalu
   check('the download call targets the V2 asset API', call && call.host, 'api-v2-cdn.uppbeat.io');
   check('the download call sends the format query param the SPA sends',
     !!(call && /[?&]format=(mp3|wav)/.test(call.path)), true);
-  /* The V2 client in Uppbeat's own bundle is axios({withCredentials:true}) —
-     cookies only. Adding a token header turns a truthful 401 into a 500. */
-  check('the V2 call sends cookies only, no Authorization header',
-    !!(call && call.headers.Cookie && !call.headers.Authorization && !call.headers['X-Auth-Token']), true);
+  /* Verified against the live service: the V2 download API accepts the
+     authorization_token (or the auth JWT) as `Authorization: Bearer` and
+     answers 200 with a real signed download URL — the auth_token COOKIE alone
+     answers 401. So the download credential travels as a Bearer header. */
+  check('the V2 call sends the download credential as a Bearer header',
+    !!(call && call.headers.Authorization === 'Bearer v2jwtvalue' && call.headers.Cookie), true);
+  check('the V2 call sends the download credential, never the auth_token, as the token',
+    call && call.headers.Authorization, 'Bearer v2jwtvalue');
 }
 {
   const before = shims.REQUESTS.length;
