@@ -128,20 +128,39 @@ export function UppbeatView() {
       });
     });
 
-    /* A single auth_token is a weak escape hatch, not the good route: Uppbeat
-       hands one to signed-out visitors too, so a token copied from a browser
-       that wasn't logged in yields a guest session — free plan, HTTP 500 on
-       every download. Say so, and prefer the whole Cookie header below. */
+    /* Two separate credentials live in a signed-in Uppbeat browser: `auth_token`
+       for the account API (who you are, what plan) and `authorization_token`
+       for the download API (what lets the CDN hand over the audio file). They
+       are different values. Either may be pasted on its own — an auth JWT also
+       doubles as the download credential (Uppbeat accepts it as a Bearer token
+       for downloads), while a bare non-JWT auth_token can only sign in. */
     const tokenIn = U.el('input', { class: 'ps2-input', type: 'text',
-      placeholder: 'the auth_token / authorization_token value',
+      placeholder: 'auth_token (account API)',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
     const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
-      text: 'Use token', title: 'Last resort. Copy it only from a browser tab that is signed in to uppbeat.io — Uppbeat also issues an auth_token to signed-out visitors, and that one reads as the free plan and fails every download. The whole Cookie header below is more reliable.',
+      text: 'Use auth_token', title: 'The account-API token (who you are / your plan). A JWT here also unlocks downloads; a non-JWT value only signs you in. Copy it only from a browser tab signed in to uppbeat.io — Uppbeat issues an auth_token to signed-out visitors too, and that one reads as the free plan.',
       style: { marginTop: '6px' } });
     tokenBtn.addEventListener('click', function () {
       try {
         setStatus('Checking that token with Uppbeat…', '');
         Uppbeat.setAuthToken(tokenIn.value).then(withSession, function (e) {
+          setStatus('Could not use that token: ' + e.message, 'err');
+        });
+      } catch (e) {
+        setStatus('Could not use that token: ' + e.message, 'err');
+      }
+    });
+
+    const dlTokenIn = U.el('input', { class: 'ps2-input', type: 'text',
+      placeholder: 'authorization_token (download API)',
+      style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
+    const dlTokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
+      text: 'Use authorization_token', title: 'The download-API token (what actually lets the CDN hand over audio files). If you only have one token and it looks like a JWT (three dot-separated parts), the auth_token box above is enough — this is for when Uppbeat gives you a separate download token.',
+      style: { marginTop: '6px' } });
+    dlTokenBtn.addEventListener('click', function () {
+      try {
+        setStatus('Checking that token with Uppbeat…', '');
+        Uppbeat.setAuthorizationToken(dlTokenIn.value).then(withSession, function (e) {
           setStatus('Could not use that token: ' + e.message, 'err');
         });
       } catch (e) {
@@ -266,6 +285,8 @@ export function UppbeatView() {
         U.el('div', { class: 'ps2-col-gap', style: { marginTop: '6px' } }, [
           tokenIn,
           U.el('div', {}, [ tokenBtn ]),
+          dlTokenIn,
+          U.el('div', {}, [ dlTokenBtn ]),
           U.el('hr', { class: 'ps2-hr' }),
           passEmailIn,
           passIn,

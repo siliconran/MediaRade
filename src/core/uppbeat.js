@@ -171,7 +171,20 @@ export { browserInstalled, foxRoot, cookiesArg };
 
 /* --- session ------------------------------------------------------------- */
 
-let session = { cookies: '', token: '', account: null, plan: 'free', signedIn: false, importedAt: null };
+/* Uppbeat authenticates the two APIs with TWO different credentials that the
+   user pastes/imports separately:
+     - authToken          -> the account API (prod-api setup_frontend). Uppbeat
+       echoes whatever `auth_token` cookie/header it is handed, and the account
+       reads it for is_authenticated. This is the "who am I / what plan" token.
+     - authorizationToken -> the download API (api-v2-cdn). It is the JWT the
+       CDN accepts as `Authorization: Bearer` (or an `authorization_token`
+       cookie). A session that can sign in but holds only an auth_token cannot
+       download — they are genuinely different credentials.
+   `cookies` stays as the full jar for the browser-style calls; the two token
+   fields are what each API actually keys on. Both the API/cookie import path
+   and the manual email+password path populate them. */
+let session = { cookies: '', token: '', authToken: '', authorizationToken: '',
+  account: null, plan: 'free', signedIn: false, importedAt: null };
 
 function endpoints() {
   const custom = Config.get('uppbeatEndpoints');
@@ -217,19 +230,24 @@ function sessionHeaders(extra, url) {
     h.Cookie = session.cookies;
     const xsrf = session.cookies.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/i);
     if (xsrf) h['X-XSRF-TOKEN'] = decodeURIComponent(xsrf[1]);
-    /* Cookies alone for the V2 asset API — mirroring its own client exactly.
-       Adding a token header there converts a truthful 401 into a 500. */
-    if (isV2Host(url)) return h;
+    if (isV2Host(url)) {
+      /* The download API accepts the `authorization_token` (or a pasted auth
+         JWT) as `Authorization: Bearer` — verified on the wire: Bearer <jwt>
+         returns 200 with a real signed download URL. The auth_token COOKIE is
+         ignored by it (answers 401), so the credential is sent as a Bearer
+         header rather than relying on the jar to carry the right cookie. */
+      const v = session.authorizationToken || session.authToken || session.token || '';
+      if (v) {
+        h['Authorization'] = 'Bearer ' + v;
+        h['X-Authorization-Token'] = v;
+      }
+      return h;
+    }
     /* The SPA authenticates to prod-api by reading the `auth_token` COOKIE and
        echoing it as the X-Auth-Token header (confirmed on the wire). Only
        auth_token — `authorization_token` belongs to the V2 API and is a
        different value, so it must not be substituted here. */
-    let v = String((session.cookies.match(/(?:^|;\s*)auth_token=([^;]+)/i) || [])[1] || '').trim();
-    try { v = decodeURIComponent(v); } catch (e) {}
-    if (!v) {
-      v = String(session.token || '').trim();
-      try { v = decodeURIComponent(v); } catch (e) {}
-    }
+    const v = session.authToken || session.token || '';
     if (v) {
       h['Authorization'] = 'Bearer ' + v;
       h['X-Authorization-Token'] = v;
@@ -239,24 +257,15 @@ function sessionHeaders(extra, url) {
   return h;
 }
 
-/** Can this cookie jar possibly carry the V2 download credential?
+/** Can this session carry the V2 download credential?
 
-    What is measured, not guessed: the V2 API ignores `auth_token` entirely (it
-    answers 401 exactly as it does with no cookie at all) and reads
-    `authorization_token`. What is inferred: that the real `authorization_token`
-    is an ordinary cookie present in a signed-in browser — likely, since Cookie
-    Editor lists both names, but not something we have observed the value of.
-
-    So this deliberately does NOT demand that exact name. A jar holding nothing
-    but `auth_token` cannot carry a download credential under any naming, and
-    that is the case worth blocking. Anything richer gets its attempt, and the
-    server's answer decides. */
-function canAttemptDownload(cookies) {
-  const names = String(cookies || '').split(';')
-    .map(function (c) { return c.split('=')[0].trim().toLowerCase(); })
-    .filter(Boolean);
-  if (!names.length) return false;
-  return names.some(function (n) { return n !== 'auth_token'; });
+    The download API answers 401 to the `auth_token` cookie and 200 to a JWT
+    sent as `Authorization: Bearer`. `syncTokenFields` derives the download
+    credential from either the `authorization_token` cookie or a JWT auth_token
+    (which Uppbeat also accepts for downloads), so a jar that resolves to a
+    download credential is attemptable; one that resolves to nothing is not. */
+function canAttemptDownload() {
+  return !!session.authorizationToken;
 }
 
 /**
@@ -703,6 +712,30 @@ function hasAuthJwt(cookies) {
   return jwtPayload(v) !== null;
 }
 
+/** Pull one cookie's value out of a `k=v; k2=v2` jar. Returns '' when absent. */
+function cookieValue(cookies, name) {
+  const m = String(cookies || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)', 'i'));
+  if (!m) return '';
+  let v = m[1].trim();
+  try { v = decodeURIComponent(v); } catch (e) {}
+  return v;
+}
+
+/** Re-derive the two API credentials from the cookie jar after any change.
+    - `authToken`          <- auth_token cookie  (account API)
+    - `authorizationToken` <- authorization_token cookie, OR — when only the
+      auth_token is present and it is a JWT — the auth_token itself, because
+      the V2 download API accepts that JWT as `Authorization: Bearer`
+      (verified against the live service: Bearer <jwt> answers 200 with a real
+      signed download URL, while the auth_token cookie alone answers 401). */
+function syncTokenFields() {
+  const authz = cookieValue(session.cookies, 'authorization_token');
+  const auth = cookieValue(session.cookies, 'auth_token');
+  session.authToken = auth || session.token || '';
+  session.authorizationToken = authz || (jwtPayload(auth) ? auth : '');
+  return session;
+}
+
 /** Resolve the plan from a pasted token: premium claims -> 'creator', a
     decodable-but-free token -> 'free', no token at all -> '' (caller falls
     back to the network/browser path). */
@@ -734,6 +767,7 @@ export const Uppbeat = {
       /* A manually pasted auth_token is a JWT that already names the plan
          (role/permissions). Re-derive it here so a stale saved `plan` (e.g. a
          pre-JWT 'free') never mislabels a Creator session on the next boot. */
+      syncTokenFields();
       const local = planFromSession(session.cookies);
       if (local) session.plan = local;
     }
@@ -741,9 +775,12 @@ export const Uppbeat = {
   },
 
   saveSession: function () {
+    syncTokenFields();
     Config.set('uppbeatSession', {
       cookies: session.cookies,
       token: session.token,
+      authToken: session.authToken,
+      authorizationToken: session.authorizationToken,
       account: session.account,
       plan: session.plan,
       signedIn: session.signedIn,
@@ -754,7 +791,8 @@ export const Uppbeat = {
   },
 
   clearSession: function () {
-    session = { cookies: '', token: '', account: null, plan: 'free', signedIn: false, importedAt: null };
+    session = { cookies: '', token: '', authToken: '', authorizationToken: '',
+      account: null, plan: 'free', signedIn: false, importedAt: null };
     Uppbeat.saveSession();
     return session;
   },
@@ -978,35 +1016,53 @@ export const Uppbeat = {
   },
 
   /** Give the login token directly (copy from Cookie Editor / DevTools).
-      Cookie Editor shows two names for it — `auth_token` and the fully
-      spelled-out `authorization_token`. We don't know which one Uppbeat
-      actually reads, so write the value under BOTH names (the server uses
-      whichever is right and ignores the other). If the pasted text is already
-      a `name=value` pair (e.g. `authorization_token=…`), route it through the
-      full cookie parser so the name you supplied is preserved exactly.
+      If the pasted text is already a `name=value` pair (e.g.
+      `authorization_token=…`), route it through the full cookie parser so the
+      name you supplied is preserved exactly.
 
       `auth_token` and `authorization_token` are TWO DIFFERENT COOKIES with
       different values, and this used to copy the pasted value into both. That
       guess was actively harmful. Verified against the live service:
-        - the legacy API (prod-api) reads `auth_token`; the V2 download API
-          (api-v2-cdn) ignores it completely — auth_token alone answers 401;
-        - the V2 API reads `authorization_token`, and returns 500 rather than
-          401 for ANY value it does not recognise (an opaque token, a
-          well-formed JWT, even the string "abc" — only an EMPTY value gives a
-          clean 401). That is Uppbeat's bug, but we were feeding it.
-      So minting a fake `authorization_token` guaranteed the HTTP 500 on every
-      download. We now write only what we were actually given.
-
-      This is also a NARROW escape hatch, not the recommended route: the token
-      alone can sign you in and report the plan, but it cannot download,
-      because the real `authorization_token` never comes with it. Import the
-      whole cookie jar for that. */
+        - the account API (prod-api) reads `auth_token`;
+        - the V2 download API (api-v2-cdn) IGNORES the auth_token cookie
+          (auth_token alone answers 401) and accepts the download credential as
+          `Authorization: Bearer` — the same JWT Uppbeat signs into
+          `authorization_token` answers 200 with a real signed download URL.
+      So a pasted auth JWT now enables BOTH APIs: `syncTokenFields` derives the
+      download credential from it, `sessionHeaders` sends it as Bearer to the
+      download endpoint, and the plan is read from its role/permissions claims.
+      A non-JWT opaque token can only sign in and report the plan — it cannot
+      download, so it is not fabricated into an authorization_token (that minted
+      cookie was itself the cause of the old HTTP 500 on every download). */
   setAuthToken: function (token) {
     const raw = String(token == null ? '' : token)
       .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
     if (!raw) throw new Error('Paste the token value first.');
     if (raw.indexOf('=') > -1) return Uppbeat.setCookiesManually(raw);
     session.cookies = 'auth_token=' + raw;
+    session.signedIn = true;
+    session.importedAt = Date.now();
+    Uppbeat.saveSession();
+    const local = planFromSession(session.cookies);
+    if (local) {
+      session.plan = local;
+      session.planError = null;
+      Uppbeat.saveSession();
+      return Promise.resolve(session);
+    }
+    return Uppbeat.refreshPlan();
+  },
+
+  /** Give the download credential directly (the `authorization_token` cookie
+      value, or the auth JWT). Separate from setAuthToken because the account
+      API and the download API key on different credentials — this one is what
+      resolveDownload sends as `Authorization: Bearer`. */
+  setAuthorizationToken: function (token) {
+    const raw = String(token == null ? '' : token)
+      .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
+    if (!raw) throw new Error('Paste the authorization_token value first.');
+    if (raw.indexOf('=') > -1) return Uppbeat.setCookiesManually(raw);
+    session.cookies = (session.cookies ? session.cookies + '; ' : '') + 'authorization_token=' + raw;
     session.signedIn = true;
     session.importedAt = Date.now();
     Uppbeat.saveSession();
@@ -1471,10 +1527,11 @@ export const Uppbeat = {
       return Promise.reject(new Error('No Uppbeat session — press "Sign in" and import your session before downloading.'));
     }
     if (session.signedIn === false) return Promise.reject(new Error(SIGNED_OUT_MSG));
-    /* The one check that would have saved all of this: a jar holding only
-       `auth_token` cannot download, because the V2 API does not read that
-       cookie at all. Refuse with an explanation rather than earning a 500. */
-    if (!canAttemptDownload(session.cookies)) return Promise.reject(new Error(NO_V2_TOKEN_MSG));
+    /* The one check that would have saved all of this: a jar holding only a
+       non-JWT `auth_token` cannot download, because the V2 API does not read
+       that cookie and there is no JWT to send as Bearer. Refuse with an
+       explanation rather than earning a 500. */
+    if (!canAttemptDownload()) return Promise.reject(new Error(NO_V2_TOKEN_MSG));
 
     return httpGet(url, { follow: false, accept: 'application/json, audio/*, */*' })
       .then(function (res) {
