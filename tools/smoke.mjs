@@ -508,6 +508,52 @@ await UB.setAuthorizationToken('v2jwtvalue');
 check('setAuthorizationToken sets the download credential without touching auth',
   UB.session().authorizationToken, 'v2jwtvalue');
 UB.clearSession();
+
+/* --- the two-credential paste panel --------------------------------------- */
+check('setTokens is exposed for the two-field sign-in', typeof UB.setTokens, 'function');
+await UB.setTokens('accountTok', 'downloadTok');
+check('setTokens stores each credential under its own cookie name',
+  UB.session().cookies, 'auth_token=accountTok; authorization_token=downloadTok');
+check('setTokens keeps the account credential separate', UB.session().authToken, 'accountTok');
+check('setTokens keeps the download credential separate',
+  UB.session().authorizationToken, 'downloadTok');
+/* Apply handles failure only through the promise, so a bad paste must REJECT.
+   A synchronous throw escapes the handler and wedges the button disabled. */
+for (const [label, a, z] of [
+  ['a blank auth_token', '  ', 'downloadTok'],
+  ['a blank authorization_token', 'accountTok', '";"'],
+]) {
+  let rejected = false, threw = false;
+  try { await UB.setTokens(a, z).then(() => {}, () => { rejected = true; }); }
+  catch (e) { threw = true; }
+  check('setTokens rejects (never throws) on ' + label, rejected && !threw, true);
+}
+UB.clearSession();
+
+/* The V2 download API answers 401 with no credential but 500 with one it
+   rejects, and it always rejects the opaque auth_token — so auth_token must
+   never be used as a Bearer fallback there. */
+await UB.setAuthToken('opaqueaccountonly');
+{
+  const before = shims.REQUESTS.length;
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).catch(() => {});
+  const call = shims.REQUESTS.slice(before).find((r) => /api-v2-cdn/.test(String(r.host)));
+  check('no V2 request is made when only the account credential exists', !!call, false);
+}
+UB.clearSession();
+await UB.setTokens('accountTok', 'downloadTok');
+{
+  const before = shims.REQUESTS.length;
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).catch(() => {});
+  const call = shims.REQUESTS.slice(before).find((r) => /api-v2-cdn/.test(String(r.host)));
+  check('the V2 Bearer carries the download credential, not the account one',
+    call && call.headers.Authorization, 'Bearer downloadTok');
+  check('the V2 call still sends the cookie jar (cookie-based auth works too)',
+    !!(call && /authorization_token=downloadTok/.test(String(call.headers.Cookie))), true);
+  check('the V2 call never leaks the account token as X-Auth-Token',
+    !!(call && call.headers['X-Auth-Token']), false);
+}
+UB.clearSession();
 check('setPlan is exposed', typeof UB.setPlan, 'function');
 UB.setAuthToken('xyzsecret');
 UB.setPlan('creator');
