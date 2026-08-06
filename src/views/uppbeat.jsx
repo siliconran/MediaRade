@@ -131,42 +131,34 @@ export function UppbeatView() {
     /* Two separate credentials live in a signed-in Uppbeat browser: `auth_token`
        for the account API (who you are, what plan) and `authorization_token`
        for the download API (what lets the CDN hand over the audio file). They
-       are different values. Either may be pasted on its own — an auth JWT also
-       doubles as the download credential (Uppbeat accepts it as a Bearer token
-       for downloads), while a bare non-JWT auth_token can only sign in. */
+       are different values — a session with only an auth_token can sign in but
+       answers 401 on every download. So BOTH are required here; the button only
+       applies once both are filled in. */
     const tokenIn = U.el('input', { class: 'ps2-input', type: 'text',
       placeholder: 'auth_token (account API)',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
-    const tokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
-      text: 'Use auth_token', title: 'The account-API token (who you are / your plan). A JWT here also unlocks downloads; a non-JWT value only signs you in. Copy it only from a browser tab signed in to uppbeat.io — Uppbeat issues an auth_token to signed-out visitors too, and that one reads as the free plan.',
-      style: { marginTop: '6px' } });
-    tokenBtn.addEventListener('click', function () {
-      try {
-        setStatus('Checking that token with Uppbeat…', '');
-        Uppbeat.setAuthToken(tokenIn.value).then(withSession, function (e) {
-          setStatus('Could not use that token: ' + e.message, 'err');
-        });
-      } catch (e) {
-        setStatus('Could not use that token: ' + e.message, 'err');
-      }
-    });
-
     const dlTokenIn = U.el('input', { class: 'ps2-input', type: 'text',
       placeholder: 'authorization_token (download API)',
       style: { width: '100%', marginTop: '8px', fontFamily: 'var(--ps2-font-mono)', fontSize: '10px' } });
-    const dlTokenBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm',
-      text: 'Use authorization_token', title: 'The download-API token (what actually lets the CDN hand over audio files). If you only have one token and it looks like a JWT (three dot-separated parts), the auth_token box above is enough — this is for when Uppbeat gives you a separate download token.',
+    const applyBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
+      text: 'Apply', title: 'Uses both tokens above together: auth_token for the account API, authorization_token for the download API. Both are required — Uppbeat returns 401 on downloads with only an auth_token.',
       style: { marginTop: '6px' } });
-    dlTokenBtn.addEventListener('click', function () {
-      try {
-        setStatus('Checking that token with Uppbeat…', '');
-        Uppbeat.setAuthorizationToken(dlTokenIn.value).then(withSession, function (e) {
-          setStatus('Could not use that token: ' + e.message, 'err');
-        });
-      } catch (e) {
-        setStatus('Could not use that token: ' + e.message, 'err');
+    const applyTokens = function () {
+      if (!tokenIn.value.trim() || !dlTokenIn.value.trim()) {
+        setStatus('Both fields are required — paste an auth_token AND an authorization_token.', 'err');
+        return;
       }
-    });
+      applyBtn.disabled = true;
+      setStatus('Checking those tokens with Uppbeat…', '');
+      Uppbeat.setTokens(tokenIn.value, dlTokenIn.value).then(function (s) {
+        applyBtn.disabled = false;
+        withSession(s);
+      }, function (e) {
+        applyBtn.disabled = false;
+        setStatus('Could not use those tokens: ' + e.message, 'err');
+      });
+    };
+    applyBtn.addEventListener('click', applyTokens);
 
     /* Username + password — driven through a real Chrome window, so the
        Vercel security checkpoint (which 429s every non-browser client) is
@@ -281,12 +273,13 @@ export function UppbeatView() {
         U.el('hr', { class: 'ps2-hr' }),
         U.el('div', { class: 'ps2-caption', html:
           '<b>Stuck?</b> Chrome and Edge (v127+) lock their cookies while running, and portable browsers like ' +
-          'r3dfox need their profile folder set in <b>Setup › Uppbeat</b>. Then either:' }),
+          'r3dfox need their profile folder set in <b>Setup › Uppbeat</b>. Then paste <b>both</b> tokens below and press <b>Apply</b>: ' +
+          'an <code>auth_token</code> for the account API <i>and</i> an <code>authorization_token</code> for the download API — ' +
+          'Uppbeat needs both, and the button refuses to apply until both are filled in.' }),
         U.el('div', { class: 'ps2-col-gap', style: { marginTop: '6px' } }, [
           tokenIn,
-          U.el('div', {}, [ tokenBtn ]),
           dlTokenIn,
-          U.el('div', {}, [ dlTokenBtn ]),
+          U.el('div', {}, [ applyBtn ]),
           U.el('hr', { class: 'ps2-hr' }),
           passEmailIn,
           passIn,

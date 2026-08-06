@@ -236,7 +236,12 @@ function sessionHeaders(extra, url) {
          returns 200 with a real signed download URL. The auth_token COOKIE is
          ignored by it (answers 401), so the credential is sent as a Bearer
          header rather than relying on the jar to carry the right cookie. */
-      const v = session.authorizationToken || session.authToken || session.token || '';
+      /* ONLY the download credential — never fall back to auth_token here.
+         Measured: this API answers a clean 401 when no credential is presented,
+         but 500 for any credential it rejects, and the opaque auth_token is
+         always rejected. Falling back to it would turn "not authorised" into a
+         server error and send us right back to chasing a phantom 500. */
+      const v = session.authorizationToken || '';
       if (v) {
         h['Authorization'] = 'Bearer ' + v;
         h['X-Authorization-Token'] = v;
@@ -1053,10 +1058,45 @@ export const Uppbeat = {
     return Uppbeat.refreshPlan();
   },
 
-  /** Give the download credential directly (the `authorization_token` cookie
+  /** Give BOTH session credentials at once. Uppbeat needs two different cookie
+      values — `auth_token` for the account API (who you are / your plan) and
+      `authorization_token` for the download API (what lets the CDN hand over
+      the file). A download fails (401) with only an auth_token. So from the
+      paste-your-tokens panel both are required: this builds a jar with both and
+      rejects if either is missing, so a one-field session can never be stored. */
+  setTokens: function (authToken, authorizationToken) {
+    const a = String(authToken == null ? '' : authToken)
+      .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
+    const z = String(authorizationToken == null ? '' : authorizationToken)
+      .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
+    const hasPair = a.indexOf('=') > -1 || z.indexOf('=') > -1;
+    if (hasPair) {
+      return Uppbeat.setCookiesManually(a + (a && z ? '; ' : '') + z);
+    }
+    /* Reject rather than throw: this returns a promise, and the Apply button
+       handles failure through the promise's rejection path only. A synchronous
+       throw would escape it and leave the button stuck disabled — reachable
+       whenever a paste trims to nothing (stray quotes or a lone semicolon). */
+    if (!a) return Promise.reject(new Error('Paste the auth_token value (the account-API cookie).'));
+    if (!z) return Promise.reject(new Error('Paste the authorization_token value (the download-API cookie).'));
+    session.cookies = 'auth_token=' + a + '; authorization_token=' + z;
+    session.signedIn = true;
+    session.importedAt = Date.now();
+    Uppbeat.saveSession();
+    const local = planFromSession(session.cookies);
+    if (local) {
+      session.plan = local;
+      session.planError = null;
+      Uppbeat.saveSession();
+      return Promise.resolve(session);
+    }
+    return Uppbeat.refreshPlan();
+  },
+
+  /** Give the authorization credential directly (the `authorization_token` cookie
       value, or the auth JWT). Separate from setAuthToken because the account
       API and the download API key on different credentials — this one is what
-      resolveDownload sends as `Authorization: Bearer`. */
+      resolveDownload sends as the `Authorization: Bearer`. */
   setAuthorizationToken: function (token) {
     const raw = String(token == null ? '' : token)
       .trim().replace(/^['"]+|['"]+$/g, '').replace(/;\s*$/, '');
