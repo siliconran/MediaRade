@@ -3,3 +3,15 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# local scratch / investigation files (never publish)
+jina-err.txt
+jina-out.txt
+*.bak
+tmp/
+out/
+
+# release archives (may bundle dist output + stored sessions) — never publish
+release-*.rar
+standalone-*/
+*.zip

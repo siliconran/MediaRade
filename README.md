@@ -1,11 +1,38 @@
-# MediaRade
+<div align="center">
 
-**by rad1x** — a YouTube and Uppbeat acquisition panel for Adobe Premiere Pro, built around a
-strict, evidence-based licence risk checker.
+<img src="assets/logo.png" alt="MediaRade" width="560"/>
 
-Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT), port by rad1x. The original PS2UI is React-based; this port runs on SolidJS, as does the rest of
-MediaRade's own UI. Retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and
+# <span style="color:#f4e9ec">MediaRade</span>
+
+**<span style="color:#ff2f46">by rad1x</span>** — a YouTube and Uppbeat acquisition panel for Adobe Premiere Pro,
+built around a strict, evidence-based licence risk checker.
+
+[![License](https://img.shields.io/badge/license-Apache--2.0-red)](#license)
+[![PS2UI](https://img.shields.io/badge/ui-PS2UI%20port-ff2f46)](#credits)
+[![Platform](https://img.shields.io/badge/platform-Adobe%20Premiere%20Pro-blue)](#requirements)
+
+---
+</div>
+
+Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT) — **forked and
+ported by rad1x** for MediaRade. The original PS2UI is React-based; this port runs on SolidJS, as does the rest
+of MediaRade's own UI. Retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and
 PlayStation 2 are trademarks of Sony Interactive Entertainment.
+
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [The risk checker](#the-risk-checker)
+- [Preview](#preview)
+- [Uppbeat](#uppbeat)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Development](#development)
+- [Files it writes](#files-it-writes)
+- [Credits](#credits)
+- [License](#license)
 
 ---
 
@@ -134,7 +161,7 @@ limits; check your plan's scope before using a track in advertising or for a cli
 
 ## Install
 
-The extension lives in `%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade` (`%APPDATA%` is
+The extension lives in `%APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade` (`%APPDATA%` is
 `C:\Users\<you>\AppData\Roaming`). Two ways to get it there:
 
 **1. Manual install** — do it by hand:
@@ -146,11 +173,11 @@ The extension lives in `%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade` (`%A
    npm run build
    ```
 3. Copy the three folders `CSXS\`, `dist\` and `jsx\` into
-   `%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\`:
+   `%APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade\`:
    ```bash
-   xcopy /e /i CSXS %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\CSXS
-   xcopy /e /i dist %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\dist
-   xcopy /e /i jsx  %APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade\jsx
+   xcopy /e /i CSXS %APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade\CSXS
+   xcopy /e /i dist %APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade\dist
+   xcopy /e /i jsx  %APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade\jsx
    ```
 4. Enable unsigned extensions once per CSXS version, then close and reopen Premiere — it reads the
    manifest once at startup. Open **Window › Extensions › MediaRade**.
@@ -191,7 +218,7 @@ npm run verify     # build + smoke
 npm run deploy     # build + smoke + install into Premiere
 
 # verify an installed copy rather than the repo
-node tools/smoke.mjs "%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade"
+node tools/smoke.mjs "%APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade"
 ```
 
 `tools/harness.html` boots the built panel in an ordinary browser with the CEP and Node surfaces
@@ -236,9 +263,19 @@ Respect YouTube's and Uppbeat's Terms of Service and the rights of creators.
 
 ---
 
+## Credits
+
+- **PS2UI** — the interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT, TypeScript/React), **forked and ported by rad1x** for MediaRade. The upstream design language (token contract, cube, face-button colours) belongs to Timmy-Lane; the black-and-red retint and the SolidJS/vanilla-CSS reimplementation are rad1x's work. See `css/ps2ui.css` for the full attribution header.
+- **yt-dlp** — media downloading is delegated to [yt-dlp](https://github.com/yt-dlp/yt-dlp), the open-source youtube-dl fork. **ffmpeg** handles muxing and transcoding.
+- **SolidJS** — the panel UI is built with [SolidJS](https://www.solidjs.com/).
+- **Vite** — the build tooling is [Vite](https://vitejs.dev/).
+
+---
+
 ## License
 
-MediaRade is released under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE).
+MediaRade is released under the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE). Copyright © 2026 rad1x.
+
 The interface is a CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT), which remains
 licensed separately under its own terms. PS2UI and this project are unrelated to Sony; PlayStation
 and PlayStation 2 are trademarks of Sony Interactive Entertainment.

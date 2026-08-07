@@ -11,7 +11,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $BundleId = 'com.rad1x.mediarade',
+    [string] $BundleId = 'org.rad1x.mediarade',
     [switch] $Symlink          # develop against the repo instead of copying
 )
 

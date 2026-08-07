@@ -19,7 +19,7 @@ export const Ledger = {
     if (!Config.get('ledgerEnabled')) return null;
     const row = Object.assign({
       at: new Date().toISOString(),
-      panel: 'MediaRade 1.0.0',
+      panel: 'MediaRade 1.2.2',
       project: (state.project && state.project.name) || null
     }, entry);
     try {

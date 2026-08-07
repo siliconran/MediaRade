@@ -1,6 +1,6 @@
 {
   "name": "mediarade",
-  "version": "1.0.0",
+  "version": "1.2.2",
   "description": "MediaRade — a SolidJS YouTube acquisition panel for Premiere Pro with strict, evidence-based licence verification. by rad1x",
   "type": "module",
   "scripts": {

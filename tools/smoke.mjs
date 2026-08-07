@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { JSDOM } from 'jsdom';
 
 /* Defaults to this repo; pass a path to verify an installed copy instead:
-     node tools/smoke.mjs "%APPDATA%\Adobe\CEP\extensions\com.rad1x.mediarade" */
+     node tools/smoke.mjs "%APPDATA%\Adobe\CEP\extensions\org.rad1x.mediarade" */
 const ROOT = process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /* --- assertions ----------------------------------------------------------- */
@@ -220,7 +220,7 @@ function makeShims(win) {
     evalScript(script, cb) {
       const fn = (script.match(/\$\._MediaRade\.(\w+)/) || [])[1];
       let data = {};
-      if (fn === 'ping') data = { version: '1.0.0', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
+      if (fn === 'ping') data = { version: '1.2.2', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
       else if (fn === 'getState') data = { project: { name: 'Smoke.prproj', path: 'C:\\p' }, sequence: SEQ };
       else if (fn === 'importFile') data = { name: 'clip.mp4', nodeId: 'node-1' };
       else if (fn === 'place') data = { sequence: SEQ.name, position: 12.5, track: 'V1+A1',

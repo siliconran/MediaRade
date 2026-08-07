@@ -4,13 +4,13 @@
   by rad1x
 -->
 <ExtensionManifest Version="9.0"
-                   ExtensionBundleId="com.rad1x.mediarade"
-                   ExtensionBundleVersion="1.0.0"
+                   ExtensionBundleId="org.rad1x.mediarade"
+                   ExtensionBundleVersion="1.2.2"
                    ExtensionBundleName="MediaRade"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="com.rad1x.mediarade.panel" Version="1.0.0"/>
+    <Extension Id="org.rad1x.mediarade.panel" Version="1.2.2"/>
   </ExtensionList>
 
   <ExecutionEnvironment>
@@ -26,7 +26,7 @@
   </ExecutionEnvironment>
 
   <DispatchInfoList>
-    <Extension Id="com.rad1x.mediarade.panel">
+    <Extension Id="org.rad1x.mediarade.panel">
       <DispatchInfo>
         <Resources>
           <!-- The panel loads the Vite build. Run `npm run build` after editing src/. -->
