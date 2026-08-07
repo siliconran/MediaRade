@@ -402,6 +402,14 @@ export function UppbeatView() {
       if (p.percent != null) setProgress(p.percent);
     }).then(function (res) {
       setBusy(null);
+      /* WAV is a plan entitlement on Uppbeat: asking for it without one gets a
+         403, so the download silently falls back to MP3. Say so — otherwise a
+         WAV-configured user quietly gets MP3s and cannot tell why. */
+      if (res.downgradedFrom) {
+        Toast.err('Downloaded as MP3, not ' + String(res.downgradedFrom).toUpperCase(),
+          'Your Uppbeat plan does not include ' + String(res.downgradedFrom).toUpperCase() +
+          ' downloads, so MediaRade fell back to MP3. Set Setup › Audio format to mp3 to stop seeing this.');
+      }
       finishDownload(res.file, t, report);
     }).catch(function (e) {
       setBusy(null);

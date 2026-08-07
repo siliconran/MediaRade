@@ -71,7 +71,16 @@ function makeShims(win) {
       return { size: (FILES[p] || '').length, mtimeMs: Date.now(),
                isFile: () => p in FILES, isDirectory: () => !!DIRS[p] };
     },
-    createWriteStream: () => ({ on() {}, close(cb) { cb && cb(); }, write() {}, end() {} })
+    /* A real stream, so the download path (res.pipe(out) -> 'finish' -> rename)
+       can be exercised end to end rather than stubbed out. */
+    createWriteStream: (p) => {
+      const out = new EventEmitter();
+      let buf = '';
+      out.write = (c) => { buf += String(c); return true; };
+      out.end = () => { FILES[norm(p)] = buf; setTimeout(() => out.emit('finish'), 1); };
+      out.close = (cb) => { cb && cb(); };
+      return out;
+    }
   };
 
   /* Boot with the ambient canvas off — jsdom has no 2D context. */
@@ -154,6 +163,9 @@ function makeShims(win) {
     ? { results: [{ found: 1, hits: [{ document: DOC }] }] }
     : { found: 1, hits: [{ document: DOC }] });
   const REQUESTS = [];
+  /* Lets a test force the V2 API to refuse every format, so the unrecoverable
+     403 path can be asserted as well as the wav -> mp3 recovery. */
+  const FLAGS = { V2_FORCE_403: false };
 
   const modules = {
     path, fs,
@@ -171,9 +183,26 @@ function makeShims(win) {
         res.statusCode = 200;
         res.headers = { 'content-length': '2' };
         res.setEncoding = () => {};
-        const body = /typesense/.test(String(opts.hostname || ''))
-          ? JSON.stringify(SEARCH_BODY(opts))
-          : JSON.stringify(ACCOUNT_BODY());
+        const isV2 = /api-v2-cdn/.test(String(opts.hostname || ''));
+        let body;
+        if (/typesense/.test(String(opts.hostname || ''))) body = JSON.stringify(SEARCH_BODY(opts));
+        else if (isV2) {
+          /* Measured on the live API: WAV is an entitlement. The same track
+             answers 403 "Insufficient privileges" for format=wav and 200 for
+             format=mp3, so the mock reproduces exactly that. */
+          if (FLAGS.V2_FORCE_403 || /format=wav/.test(String(opts.path || ''))) {
+            res.statusCode = 403;
+            res.headers['content-type'] = 'application/problem+json';
+            body = JSON.stringify({ title: 'Insufficient privileges', status: 403 });
+          } else {
+            res.headers['content-type'] = 'application/json';
+            body = JSON.stringify({ url: 'https://download-cdn.uppbeat.io/audio-files/x/track.mp3?Signature=abc',
+                                    licenseCode: 'TESTCODE123', pageUrl: 'https://uppbeat.io/t/a/b' });
+          }
+        } else body = JSON.stringify(ACCOUNT_BODY());
+        /* httpDownload streams the body to a file with res.pipe(out); the
+           JSON callers just read 'data'/'end'. Support both. */
+        res.pipe = (out) => { setTimeout(() => { out.write(body); out.end(); }, 1); return out; };
         setTimeout(() => { cb(res); setTimeout(() => { res.emit('data', body); res.emit('end'); }, 1); }, 1);
         return { on() {}, destroy() {}, write(b) { rec.body += b; }, end() {} };
       };
@@ -203,7 +232,9 @@ function makeShims(win) {
     addEventListener() {}, removeEventListener() {}, invokeSync: () => '', resizeContent() {}
   };
 
-  return { FILES, DIRS, SPAWNED, ACCOUNT_MODE, REQUESTS };
+  return { FILES, DIRS, SPAWNED, ACCOUNT_MODE, REQUESTS,
+           get V2_FORCE_403() { return FLAGS.V2_FORCE_403; },
+           set V2_FORCE_403(v) { FLAGS.V2_FORCE_403 = v; } };
 }
 
 /* --- boot ------------------------------------------------------------------ */
@@ -701,6 +732,54 @@ await UB.setCookiesManually('auth_token=xyzsecret; authorization_token=v2jwtvalu
 await UB.resolveDownload({ id: '87094', kind: 'sfx' }).then(
   () => check('an SFX row with no variant id fails loudly', 'resolved', 'rejected'),
   (e) => check('an SFX row with no variant id fails loudly', /variant id/.test(e.message), true));
+
+/* --- the WAV entitlement -------------------------------------------------
+   Uppbeat gates WAV by plan: the same track answers 403 for format=wav and
+   200 for format=mp3. The panel's audioFormat setting is the yt-dlp one, so
+   feeding it straight through made EVERY Uppbeat download fail for anyone
+   whose global preference was wav. Ask, then fall back. */
+MR.Config.set('audioFormat', 'wav');
+{
+  const before = shims.REQUESTS.length;
+  const r = await UB.resolveDownload({ id: '13902', kind: 'track' });
+  const calls = shims.REQUESTS.slice(before).filter((c) => /api-v2-cdn/.test(String(c.host)));
+  check('a wav preference is asked for first', /format=wav/.test(calls[0] && calls[0].path), true);
+  check('a 403 on wav retries as mp3 instead of failing',
+    !!calls.find((c) => /format=mp3/.test(c.path)), true);
+  check('the resolved format reports what was actually served', r.format, 'mp3');
+  check('the downgrade is recorded so the UI can say so', r.downgradedFrom, 'wav');
+  check('the licence code comes back with the download', r.licenseCode, 'TESTCODE123');
+}
+{
+  const res = await UB.download({ id: '13902', kind: 'track', artist: 'Dope Cat', title: 'Chill FM' });
+  /* A .wav named file holding mp3 bytes breaks Premiere's import. */
+  check('the file is named for the format actually served, not the one asked for',
+    /\.mp3$/.test(res.file), true);
+  check('download reports the served format', res.format, 'mp3');
+}
+MR.Config.set('audioFormat', 'mp3');
+{
+  const before = shims.REQUESTS.length;
+  const r = await UB.resolveDownload({ id: '13902', kind: 'track' });
+  const calls = shims.REQUESTS.slice(before).filter((c) => /api-v2-cdn/.test(String(c.host)));
+  check('an mp3 preference asks once and does not retry', calls.length, 1);
+  check('no phantom downgrade is reported when none happened', r.downgradedFrom, undefined);
+}
+/* When the fallback cannot save it (mp3 itself refused), the 403 must be
+   explained as an entitlement rather than sending the user to re-import a
+   session that is working fine. */
+MR.Config.set('audioFormat', 'wav');
+shims.V2_FORCE_403 = true;
+{
+  let msg = '(resolved)';
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).then(() => {}, (e) => { msg = e.message; });
+  check('an unrecoverable 403 blames the plan/format, not the session',
+    /insufficient privileges/i.test(msg) && /WAV/.test(msg), true);
+  check('an unrecoverable 403 does not tell you to re-import the session',
+    /re-open uppbeat\.io|missing or expired/i.test(msg), false);
+}
+shims.V2_FORCE_403 = false;
+MR.Config.set('audioFormat', 'mp3');
 /* prod-api still needs the header form, so the gating must be per-host. */
 {
   const before = shims.REQUESTS.length;
