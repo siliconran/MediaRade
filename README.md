@@ -14,8 +14,7 @@ built around a strict, evidence-based licence risk checker.
 ---
 </div>
 
-Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT) — **forked and
-ported by rad1x** for MediaRade. The original PS2UI is React-based; this port runs on SolidJS, as does the rest
+Interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT) — **forked and ported by rad1x to SolidJS** for MediaRade. The original PS2UI is React-based; this port runs on SolidJS, as does the rest
 of MediaRade's own UI. Retinted from its blue ramp to black-and-red. No Sony assets; PlayStation and
 PlayStation 2 are trademarks of Sony Interactive Entertainment.
 
@@ -265,7 +264,7 @@ Respect YouTube's and Uppbeat's Terms of Service and the rights of creators.
 
 ## Credits
 
-- **PS2UI** — the interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT, TypeScript/React), **forked and ported by rad1x** for MediaRade. The upstream design language (token contract, cube, face-button colours) belongs to Timmy-Lane; the black-and-red retint and the SolidJS/vanilla-CSS reimplementation are rad1x's work. See `css/ps2ui.css` for the full attribution header.
+- **PS2UI** — the interface is a dependency-free CSS port of [PS2UI](https://github.com/Timmy-Lane/ps2ui) (MIT, React), **forked and ported by rad1x to SolidJS** for MediaRade. The upstream design language (token contract, cube, face-button colours) belongs to Timmy-Lane; the black-and-red retint and the SolidJS/vanilla-CSS reimplementation are rad1x's work. See `css/ps2ui.css` for the full attribution header.
 - **yt-dlp** — media downloading is delegated to [yt-dlp](https://github.com/yt-dlp/yt-dlp), the open-source youtube-dl fork. **ffmpeg** handles muxing and transcoding.
 - **SolidJS** — the panel UI is built with [SolidJS](https://www.solidjs.com/).
 - **Vite** — the build tooling is [Vite](https://vitejs.dev/).
