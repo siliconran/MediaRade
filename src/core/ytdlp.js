@@ -88,6 +88,13 @@ export const YtDlp = {
     // downloads. Giving yt-dlp a client list lets it fall back when blocked;
     // android/tv serve the same streams and are far less likely to be throttled.
     a.push('--extractor-args', 'youtube:player_client=default,android,tv,web');
+    // Since mid-2025 YouTube runs the "n" signature challenge on many streams.
+    // Without a JS runtime + solver distribution yt-dlp cannot decrypt the n
+    // parameter, and the resulting media URL comes back as HTTP 403 (or an
+    // early SSL EOF). `node` is auto-detected once named, and ejs:github pulls
+    // the solver script on demand. --force-ipv4 dodges flaky IPv6 media CDNs
+    // that otherwise cut the connection mid-download.
+    a.push('--js-runtimes', 'node', '--remote-components', 'ejs:github', '--force-ipv4');
     return a;
   },
 
@@ -396,7 +403,7 @@ export const YtDlp = {
        'ffmpeg is required for this format. Install it or set its path in Settings.'],
       [/HTTP Error 429|Too Many Requests/i, 'YouTube is rate-limiting you. Wait a few minutes, or set a rate limit in Settings.'],
       [/HTTP Error 403|HTTP 403/i,
-       'YouTube briefly refused the media request (HTTP 403). This is usually a temporary bot-check — click Retry, or set "Cookies from browser" in Settings to a browser you are signed into.'],
+       'YouTube refused the media request (HTTP 403) — usually a bot/"n" challenge check. MediaRade now auto-solves this via yt-dlp\'s JS solver. If you still see it, install a JS runtime (Node.js) or set "Cookies from browser" in Settings.'],
       [/Unable to download webpage|getaddrinfo|ENOTFOUND|timed out/i, 'Network error reaching YouTube.'],
       [/Requested format is not available/i, 'That quality is not available for this video. Try a lower cap or "Best".'],
       [/No space left|ENOSPC/i, 'The drive is full.']

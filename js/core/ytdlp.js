@@ -72,6 +72,7 @@
       if (cfg.proxy) a.push('--proxy', cfg.proxy);
       if (cfg.cookiesFromBrowser) a.push('--cookies-from-browser', cfg.cookiesFromBrowser);
       if (YtDlp.ffmpeg) a.push('--ffmpeg-location', YtDlp.ffmpeg);
+      a.push('--js-runtimes', 'node', '--remote-components', 'ejs:github', '--force-ipv4');
       return a;
     },
 
