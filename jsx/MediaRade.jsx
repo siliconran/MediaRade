@@ -12,7 +12,7 @@
 $._MediaRade = (function () {
   'use strict';
 
-  var VERSION = '1.2.2';
+  var VERSION = '1.3.0';
   var TICKS_PER_SECOND = 254016000000;
 
   /* =========================================================================

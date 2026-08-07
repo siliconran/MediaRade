@@ -220,7 +220,7 @@ function makeShims(win) {
     evalScript(script, cb) {
       const fn = (script.match(/\$\._MediaRade\.(\w+)/) || [])[1];
       let data = {};
-      if (fn === 'ping') data = { version: '1.2.2', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
+      if (fn === 'ping') data = { version: '1.3.0', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
       else if (fn === 'getState') data = { project: { name: 'Smoke.prproj', path: 'C:\\p' }, sequence: SEQ };
       else if (fn === 'importFile') data = { name: 'clip.mp4', nodeId: 'node-1' };
       else if (fn === 'place') data = { sequence: SEQ.name, position: 12.5, track: 'V1+A1',

@@ -379,7 +379,7 @@
     about: function () {
       return panel('About', [
         U.el('div', { style: { fontSize: '11px', lineHeight: '1.7', color: 'var(--ps2-text-secondary)' }, html:
-          '<b style="color:var(--ps2-ash)">MediaRade 1.2.2</b> — by rad1x.<br>' +
+          '<b style="color:var(--ps2-ash)">MediaRade 1.3.0</b> — by rad1x.<br>' +
           'A YouTube acquisition panel for Premiere Pro with strict, evidence-based licence verification.<br><br>' +
           'Interface built on a vanilla CSS port of <a href="https://github.com/Timmy-Lane/ps2ui">PS2UI</a> (MIT), ' +
           'retinted to a black-and-red ramp. No Sony assets are used; PlayStation and PlayStation 2 are ' +
