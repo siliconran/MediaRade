@@ -61,6 +61,7 @@ const DEFAULTS = {
      resulting uppbeat.io cookies, never a password.                        */
   uppbeatEnabled: true,
   uppbeatBrowser: 'chrome',         // browser to import the session from
+  uppbeatLoginBrowser: 'chrome',    // browser whose window drives the email+password login (chrome/edge/brave/opera/vivaldi/chromium)
   uppbeatSession: null,             // { cookies, account, plan, signedIn, importedAt }
   uppbeatResultCount: 30,
   uppbeatSignInTries: 40,           // ~3.5 min of polling for the browser session

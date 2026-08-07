@@ -15,3 +15,7 @@ out/
 release-*.rar
 standalone-*/
 *.zip
+
+# Windows reserved-name device / shell-redirect artifact (not a real file)
+NUL
+\\?\NUL

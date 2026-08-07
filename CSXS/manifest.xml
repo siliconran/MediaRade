@@ -5,12 +5,12 @@
 -->
 <ExtensionManifest Version="9.0"
                    ExtensionBundleId="org.rad1x.mediarade"
-                   ExtensionBundleVersion="1.3.0"
+                   ExtensionBundleVersion="1.3.4"
                    ExtensionBundleName="MediaRade"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <ExtensionList>
-    <Extension Id="org.rad1x.mediarade.panel" Version="1.3.0"/>
+    <Extension Id="org.rad1x.mediarade.panel" Version="1.3.4"/>
   </ExtensionList>
 
   <ExecutionEnvironment>

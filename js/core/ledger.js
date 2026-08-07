@@ -15,7 +15,7 @@
       if (!Config.get('ledgerEnabled')) return null;
       var row = Object.assign({
         at: new Date().toISOString(),
-        panel: 'MediaRade 1.3.0',
+        panel: 'MediaRade 1.3.4',
         project: (State.project && State.project.name) || null
       }, entry);
       try {

@@ -1222,7 +1222,8 @@ export const Uppbeat = {
       let fs = null;
       try { fs = CEP.fs; if (fs && !fs.existsSync(script)) throw new Error('The Chrome login helper is not installed — re-run "npm run deploy".'); } catch (e) { if (e && e.message && e.message.indexOf('deploy') > -1) throw e; }
 
-      return Proc.run(node, [script, '--email', email, '--timeout', '120000'], {
+      const browser = (Config.get && Config.get('uppbeatLoginBrowser')) || 'chrome';
+      return Proc.run(node, [script, '--email', email, '--browser', browser, '--timeout', '120000'], {
         stdin: password + '\n',
         timeout: 150000,
         maxBuffer: 3e6
@@ -1270,7 +1271,8 @@ export const Uppbeat = {
       if (!node) throw new Error('Could not find a system Node.js to drive Chrome for the plan check.');
       const script = Uppbeat.helperPath();
       if (!script) throw new Error('Node is unavailable in this panel — the plan check needs the bundled Node runtime.');
-      return Proc.run(node, [script, '--verify', '--timeout', '60000'], {
+      const browser = (Config.get && Config.get('uppbeatLoginBrowser')) || 'chrome';
+      return Proc.run(node, [script, '--verify', '--browser', browser, '--timeout', '60000'], {
         stdin: session.cookies + '\n',
         timeout: 90000,
         maxBuffer: 3e6

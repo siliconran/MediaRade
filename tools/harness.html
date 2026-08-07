@@ -104,7 +104,7 @@
       evalScript: function (script, cb) {
         var fn = (script.match(/\$\._MediaRade\.(\w+)/) || [])[1];
         var data = {};
-        if (fn === 'ping') data = { version: '1.3.0', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
+        if (fn === 'ping') data = { version: '1.3.4', host: 'Premiere Pro', hostVersion: '25.0', hasProject: true };
         else if (fn === 'getState') data = { project: { name: 'Harness.prproj', path: 'C:\\p' }, sequence: SEQ };
         else if (fn === 'getTracks') data = { video: 3, audio: 4 };
         else if (fn === 'importFile') data = { name: 'clip.mp4', nodeId: 'node-1', path: 'C:\\clip.mp4' };

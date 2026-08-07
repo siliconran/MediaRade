@@ -422,7 +422,7 @@ function AboutPanel(props) {
   return (
     <Panel title="About">
       <div style={{ fontSize: '11px', lineHeight: '1.7', color: 'var(--ps2-text-secondary)' }} innerHTML={
-        '<b style="color:var(--ps2-ash)">MediaRade 1.3.0</b> — by rad1x.<br>' +
+        '<b style="color:var(--ps2-ash)">MediaRade 1.3.4</b> — by rad1x.<br>' +
         'A YouTube acquisition panel for Premiere Pro with strict, evidence-based licence verification.<br><br>' +
         'Interface built on a vanilla CSS port of <a href="https://github.com/Timmy-Lane/ps2ui">PS2UI</a> (MIT), ' +
         'retinted to a black-and-red ramp. No Sony assets are used; PlayStation and PlayStation 2 are ' +
@@ -544,6 +544,16 @@ function UppbeatPanel() {
           <TextInput key="uppbeatProfilePath" placeholder="e.g. D:\\r3dfox\\Profiles" />
         </Row>
       </Show>
+
+      <Row label="Email + password login browser"
+        hint={'Which browser window MediaRade drives when you use the <b>manual username &amp; password</b> sign-in. ' +
+              'Any Chromium-family browser works because they all speak the same DevTools protocol. ' +
+              'Firefox-family browsers do not — use them via the cookie-import path above instead. ' +
+              'To force a specific install, set the <code>MR_BROWSER_PATH</code> environment variable.'}>
+        <Select options={['chrome', 'edge', 'brave', 'opera', 'vivaldi', 'chromium'].map((b) => ({ value: b, label: b[0].toUpperCase() + b.slice(1) }))}
+          value={Config.get('uppbeatLoginBrowser')}
+          onChange={(v) => Config.set('uppbeatLoginBrowser', v)} />
+      </Row>
 
       <div class="ps2-row-gap ps2-wrap" style={{ marginBottom: '10px' }}>
         <Btn size="sm" variant="primary" label="Sign in"

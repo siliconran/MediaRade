@@ -37,6 +37,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const LOGIN_URL = 'https://uppbeat.io/login';
+const DEBUG = typeof process !== 'undefined' && (process.env.UB_DEBUG === '1' || process.env.UB_DEBUG === 'true');
+const trace = (...a) => { if (DEBUG) process.stderr.write('[ub] ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n'); };
 const API_BASE = 'https://prod-api.uppbeat.io';
 /* The rebuilt SPA serves account/plan state from /api/setup_frontend. A real
    browser shares the .uppbeat.io session cookies with the prod-api subdomain,
@@ -47,24 +49,106 @@ const API_BASE = 'https://prod-api.uppbeat.io';
    it is handed, so it reads true for guests and for values it never issued. */
 const ACCOUNT_PATH = API_BASE + '/api/setup_frontend?fev=uppbeat-next@1.1.18';
 
-const CHROME_CANDIDATES = [
-  process.env.MR_CHROME,
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  process.env['ProgramFiles'] ? (process.env['ProgramFiles'] + '\\Google\\Chrome\\Application\\chrome.exe') : null,
-  process.env['ProgramFiles(x86)'] ? (process.env['ProgramFiles(x86)'] + '\\Google\\Chrome\\Application\\chrome.exe') : null,
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-].filter(Boolean);
+/* Browser registry. Uppbeat's login sits behind a Vercel "security checkpoint"
+   that only a real browser can pass, so we drive a genuine window through the
+   Chrome DevTools Protocol. Any Chromium-family browser speaks CDP identically,
+   so Chrome, Edge, Brave, Opera, Vivaldi and Chromium all work through the same
+   code path — just pick a different executable. Firefox-family browsers do NOT
+   speak CDP in this helper; they are supported through the cookie-import path
+   instead ("Sign in" > "I've signed in — Import session"), which yt-dlp reads
+   natively. The env var MR_BROWSER_PATH (or MR_CHROME) overrides the lookup. */
+const BROWSER = {
+  chrome: {
+    label: 'Chrome',
+    envs: ['MR_BROWSER_PATH', 'MR_CHROME'],
+    exe: 'chrome.exe',
+    candidates: [
+      '$PF\\Google\\Chrome\\Application\\chrome.exe',
+      '$PF86\\Google\\Chrome\\Application\\chrome.exe'
+    ]
+  },
+  edge: {
+    label: 'Edge',
+    envs: ['MR_BROWSER_PATH'],
+    exe: 'msedge.exe',
+    candidates: [
+      '$PF\\Microsoft\\Edge\\Application\\msedge.exe',
+      '$PF86\\Microsoft\\Edge\\Application\\msedge.exe'
+    ]
+  },
+  brave: {
+    label: 'Brave',
+    envs: ['MR_BROWSER_PATH'],
+    exe: 'brave.exe',
+    candidates: [
+      '$PF\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+      '$PF86\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+      '$LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\Application\\brave.exe'
+    ]
+  },
+  opera: {
+    label: 'Opera',
+    envs: ['MR_BROWSER_PATH'],
+    exe: 'opera.exe',
+    candidates: [
+      '$PF\\Opera\\opera.exe',
+      '$PF86\\Opera\\opera.exe',
+      '$LOCALAPPDATA\\Programs\\Opera\\opera.exe'
+    ]
+  },
+  vivaldi: {
+    label: 'Vivaldi',
+    envs: ['MR_BROWSER_PATH'],
+    exe: 'vivaldi.exe',
+    candidates: [
+      '$PF\\Vivaldi\\Application\\vivaldi.exe',
+      '$PF86\\Vivaldi\\Application\\vivaldi.exe',
+      '$LOCALAPPDATA\\Vivaldi\\Application\\vivaldi.exe'
+    ]
+  },
+  chromium: {
+    label: 'Chromium',
+    envs: ['MR_BROWSER_PATH'],
+    exe: 'chrome.exe',
+    candidates: [
+      '$LOCALAPPDATA\\Chromium\\Application\\chrome.exe',
+      'C:\\Program Files\\Chromium\\chrome.exe'
+    ]
+  }
+};
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function expand(render) {
+  if (!render) return null;
+  const vars = { PF: process.env['ProgramFiles'], PF86: process.env['ProgramFiles(x86)'], LOCALAPPDATA: process.env['LOCALAPPDATA'] };
+  const out = render.replace(/\$([A-Z0-9]+)/g, (m, name) => vars[name] || '');
+  return out || null;
+}
 
-function findChrome() {
-  for (const c of CHROME_CANDIDATES) {
-    if (c && existsSync(c)) return c;
+/** Resolve the executable for a browser id, honouring explicit override env
+ * vars first, then well-known install paths. Returns null if not installed. */
+function findBrowser(id) {
+  const meta = BROWSER[id] || BROWSER.chrome;
+  for (const e of meta.envs) {
+    if (e && process.env[e] && existsSync(process.env[e])) return process.env[e];
+  }
+  for (const c of meta.candidates) {
+    const p = expand(c);
+    if (p && existsSync(p)) return p;
   }
   return null;
 }
+
+/** Read `--browser <id>` from the command line (accepts chrome/edge/brave/
+ * opera/vivaldi/chromium, case-insensitive). Defaults to chrome. */
+function browserArg() {
+  const args = process.argv.slice(2);
+  const i = args.indexOf('--browser');
+  let id = i > -1 ? String(args[i + 1] || '').trim().toLowerCase() : '';
+  if (!id) id = process.env.MR_BROWSER || 'chrome';
+  return BROWSER[id] ? id : 'chrome';
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* --- minimal CDP client over Node's global WebSocket ---------------------- */
 
@@ -108,6 +192,62 @@ function connectWS(url, timeoutMs) {
     ws.addEventListener('open', () => { clearTimeout(timer); resolve(ws); });
     ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Could not open the debugger socket to Chrome.')); });
   });
+}
+
+/* Real mouse click at viewport (x, y) via CDP Input domain. A plain
+   element.click() is ignored by the Cloudflare Turnstile widget — it guards
+   against synthetic events — so we must drive a genuine input mouse sequence. */
+async function realClick(cdp, sessionId, x, y) {
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId).catch(() => {});
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, sessionId).catch(() => {});
+  await sleep(80);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, sessionId).catch(() => {});
+}
+
+/* Locate the Cloudflare Turnstile widget on the login page. Returns its
+   viewport centre, or null if it is not (yet) rendered/visible. */
+const TURNSTILE_WIDGET_JS = `(() => {
+  const el = document.getElementById('cf-turnstile');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (!r || !r.width || !r.height) return null;
+  return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+})()`;
+
+const TURNSTILE_TOKEN_JS = `(() => {
+  const h = document.querySelector('input[name=cf-turnstile-response], [name=cf-turnstile-response]');
+  return h && h.value ? h.value : '';
+})()`;
+
+/* Click the Turnstile checkbox and wait for the hidden token to populate.
+   The checkbox sits top-left inside a 300×72 widget; the clickable check box
+   is ~24px from the top-left corner. Returns true on success. */
+async function solveTurnstile(cdp, sessionId, waitMs) {
+  try {
+    const deadline = Date.now() + (waitMs || 25000);
+
+    /* The widget is only injected after the first submit click; wait for it. */
+    let rect = null;
+    while (Date.now() < deadline) {
+      rect = await evaluate(cdp, sessionId, TURNSTILE_WIDGET_JS);
+      if (rect && rect.w > 0) break;
+      await sleep(400);
+    }
+    if (!rect || !rect.w) return false;
+
+    /* If a token already arrived (invisible/managed mode), nothing to do. */
+    if (await evaluate(cdp, sessionId, TURNSTILE_TOKEN_JS)) return true;
+
+    /* Click the check box near the widget's top-left corner. */
+    await realClick(cdp, sessionId, rect.x + 25, rect.y + 24);
+
+    /* Poll for the token (managed checkboxes resolve in a moment). */
+    while (Date.now() < deadline) {
+      if (await evaluate(cdp, sessionId, TURNSTILE_TOKEN_JS)) return true;
+      await sleep(500);
+    }
+    return false;
+  } catch (e) { return false; }
 }
 
 function httpJSON(url) {
@@ -256,9 +396,9 @@ async function runVerify() {
     return 1;
   }
 
-  const chromePath = findChrome();
+  const chromePath = findBrowser(browserArg());
   if (!chromePath) {
-    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to verify with. Install Chrome, or set MR_CHROME.' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No browser found to verify with. Install Chrome/Edge/Brave/Opera/Vivaldi, or set MR_BROWSER_PATH.' }) + '\n');
     return 1;
   }
 
@@ -368,9 +508,9 @@ async function runProbe() {
     .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
     .filter((p) => p && p.name && p.value);
 
-  const chromePath = findChrome();
+  const chromePath = findBrowser(browserArg());
   if (!chromePath) {
-    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to probe with.' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No browser found to probe with.' }) + '\n');
     return 1;
   }
 
@@ -485,9 +625,9 @@ async function runCapture() {
     .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
     .filter((p) => p && p.name && p.value);
 
-  const chromePath = findChrome();
+  const chromePath = findBrowser(browserArg());
   if (!chromePath) {
-    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to capture with.' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No browser found to capture with.' }) + '\n');
     return 1;
   }
 
@@ -606,9 +746,9 @@ async function runWhoami() {
     .map((s) => { const i = s.indexOf('='); return i > 0 ? { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim() } : null; })
     .filter((p) => p && p.name && p.value);
 
-  const chromePath = findChrome();
+  const chromePath = findBrowser(browserArg());
   if (!chromePath) {
-    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found.' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No browser found.' }) + '\n');
     return 1;
   }
 
@@ -745,9 +885,9 @@ async function run() {
     return 1;
   }
 
-  const chromePath = findChrome();
+  const chromePath = findBrowser(browserArg());
   if (!chromePath) {
-    process.stdout.write(JSON.stringify({ ok: false, error: 'No Chrome or Edge found to log in with. Install Chrome, or set MR_CHROME.' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, error: 'No browser found to log in with. Install Chrome/Edge/Brave/Opera/Vivaldi, or set MR_BROWSER_PATH.' }) + '\n');
     return 1;
   }
 
@@ -820,7 +960,20 @@ async function run() {
     /* 3) Fill password and submit. */
     await evaluate(cdp, pageSession, fillJS(`document.querySelector('input[type=password]')`, password));
     await sleep(300);
+
+    /* Uppbeat gates login behind a Cloudflare Turnstile checkbox. The widget is
+       only injected into the DOM after the first submit click, and its hidden
+       cf-turnstile-response token must be populated or the form will never
+       submit. We click submit once to reveal the widget, solve it (a single
+       real mouse click on the check box — no user input needed), then click
+       submit again to actually log in. */
     await evaluate(cdp, pageSession, CLICK_SUBMIT_JS);
+    const solved = await solveTurnstile(cdp, pageSession, 25000);
+    trace('turnstile solved=', solved);
+    if (solved) {
+      await sleep(300);
+      await evaluate(cdp, pageSession, CLICK_SUBMIT_JS);
+    }
 
     /* 4) Wait for the login to stick: setup_frontend answering signedIn=true
        is definitive (ME_JS reads user.is_authenticated, the only field that
@@ -833,6 +986,21 @@ async function run() {
       const s = (await evaluate(cdp, pageSession, STATE_JS).catch(() => null)) || {};
       if (s.failure) break;
       await sleep(700);
+    }
+
+    /* 4b) If it still did not stick, one more submit pass after solving (covers
+       first-click validation hiccups). */
+    if (!me.signedIn) {
+      if (await solveTurnstile(cdp, pageSession, 12000)) {
+        await sleep(300);
+        await evaluate(cdp, pageSession, CLICK_SUBMIT_JS);
+        for (;;) {
+          if (Date.now() - startedAt > remaining) break;
+          me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0, signedIn: false };
+          if (me.signedIn) break;
+          await sleep(700);
+        }
+      }
     }
 
     /* 5) Harvest cookies (uppbeat.io + the prod-api subdomain share .uppbeat.io

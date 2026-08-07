@@ -181,7 +181,7 @@ export function UppbeatView() {
       style: { width: '100%', marginTop: '4px', fontSize: '10px' } });
     const passBtn = U.el('button', { class: 'ps2-btn ps2-btn--sm ps2-btn--primary',
       text: 'Sign in with email & password',
-      title: 'Opens a real Chrome window and logs into uppbeat.io for you — the only method that gets past Uppbeat\'s browser security checkpoint. If a CAPTCHA appears, finish it in that window.',
+      title: 'Opens a real browser window (set in Setup › Uppbeat › Email + password login browser) and logs into uppbeat.io for you — the only method that gets past Uppbeat\'s browser security checkpoint. If a CAPTCHA appears, finish it in that window.',
       style: { marginTop: '6px' } });
     const enterPass = function () {
       if (passBtn.disabled) return;

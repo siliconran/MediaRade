@@ -135,6 +135,25 @@ retained. If it keeps timing out, check that `Setup › Uppbeat › Sign in with
 the browser you actually used, and close that browser — Windows locks the cookie database while it
 is running.
 
+**Signing in with email + password requires a real browser.** Uppbeat sits behind a Vercel
+"security checkpoint" that answers `429` to *every* non-browser client (curl, Node, yt-dlp,
+PowerShell) regardless of IP, which is why a VPN never helped. The only thing that passes it is a
+real browser, so the **email & password** method opens a genuine browser window and drives it to
+the login form. **Chrome is the default and the recommended browser for this path.** A Google
+Chrome install is expected — if Chrome is missing, MediaRade will automatically fall back to any
+other installed Chromium-family browser. Uppbeat also gates the login form behind a Cloudflare
+**Turnstile** checkbox, which MediaRade solves automatically in that window (you only have to finish
+a CAPTCHA if one appears). Your password goes to the login form over stdin and never appears on the
+command line.
+
+**Choose the browser used for email & password login** under `Setup › Uppbeat › Email + password
+login browser` — Chrome, Edge, Brave, Opera, Vivaldi or Chromium all work, because every
+Chromium-family browser speaks the same DevTools protocol. To force a specific install that lives
+outside the usual install folders, set the `MR_BROWSER_PATH` environment variable to the full path
+of the browser's executable. Firefox-family browsers are **not** used for this automated path (they
+speak a different protocol) — use them via the one-button **Sign in** cookie-import path instead,
+which reads a Firefox session natively.
+
 **Ingest a file** remains as a fallback: if the endpoints break, download from the site yourself and
 MediaRade will file the track with its credit.
 
@@ -151,10 +170,14 @@ limits; check your plan's scope before using a track in advertising or for a cli
 ## Requirements
 
 - Adobe Premiere Pro 14.0 or newer (CEP 9+)
+- **Google Chrome** — required for the Uppbeat **email & password** login, which drives a real
+  browser window past Uppbeat's security checkpoint. If Chrome is absent, any other installed
+  Chromium-family browser (Edge, Brave, Opera, Vivaldi, Chromium) is used automatically; you can
+  change the selection or force a specific install in `Setup › Uppbeat`.
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and [`ffmpeg`](https://ffmpeg.org/) — **not
   bundled**. Put them on `PATH`, drop them in `Documents\MediaRade\bin\`, or set explicit paths in
   `Setup › Tooling`.
-- Node.js 18+ and npm, to build the panel.
+- Node.js 21+ (for driving the browser via the DevTools protocol) and npm, to build the panel.
 
 ---
 

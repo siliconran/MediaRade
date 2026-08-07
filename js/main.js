@@ -88,7 +88,7 @@
       Paths.bootstrap();
       Search.init();
       Library.load();
-      Paths.log('boot complete — MediaRade 1.3.0 by rad1x');
+      Paths.log('boot complete — MediaRade 1.3.4 by rad1x');
     } catch (e) {
       console.error('[MediaRade] startup failed:', e);
       fatal(e);
