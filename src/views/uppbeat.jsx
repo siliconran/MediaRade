@@ -109,8 +109,18 @@ export function UppbeatView() {
         Toast.err('Signed in — plan check failed', who + ' — ' + s.planError +
           (s.plan === 'free' ? ' Tick "this account is paid" if this is a paid plan.' : ''));
       } else {
-        Toast.ok('Signed in to Uppbeat', who + ' — plan: ' + (s.plan || 'free') +
-          (s.browser ? ' (via ' + s.browser + ')' : ''));
+        /* The download credential is a ~20-minute JWT, so a session can be
+           perfectly signed in and still unable to download minutes later.
+           Report that window up front rather than letting it surface as a
+           mystery 401 on the first download. */
+        const life = Uppbeat.downloadTokenLife && Uppbeat.downloadTokenLife();
+        let extra = '';
+        if (life && life.expired) extra = ' — but the download token is ALREADY EXPIRED; paste a fresh authorization_token.';
+        else if (life) extra = ' — downloads good for ~' + life.minutes + ' min (Uppbeat expires this token quickly).';
+        else if (!(s.authorizationToken)) extra = ' — no authorization_token, so downloads will not work yet.';
+        const msg = who + ' — plan: ' + (s.plan || 'free') + (s.browser ? ' (via ' + s.browser + ')' : '') + extra;
+        if (life && life.expired) Toast.err('Signed in, but downloads will fail', msg);
+        else Toast.ok('Signed in to Uppbeat', msg);
       }
       if (input && input.value.trim()) doSearch();
     };

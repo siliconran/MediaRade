@@ -780,7 +780,65 @@ shims.V2_FORCE_403 = true;
 }
 shims.V2_FORCE_403 = false;
 MR.Config.set('audioFormat', 'mp3');
-/* prod-api still needs the header form, so the gating must be per-host. */
+
+/* --- the 20-minute download token ----------------------------------------
+   Uppbeat's authorization_token is a JWT valid for ~20 minutes. Expired, it
+   answers 401 Bearer error="invalid_token" with an EMPTY body, which reads to
+   a user as "the whole session is broken". The token dates itself, so say so
+   locally instead of spending a request to be told. */
+function jwtWithExp(secondsFromNow) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64')
+    .replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return b64({ alg: 'HS512', typ: 'JWT' }) + '.' +
+    b64({ id: '1', role: ['User', 'Creator'], exp: Math.floor(Date.now() / 1000) + secondsFromNow }) + '.sig';
+}
+UB.clearSession();
+await UB.setTokens('accountTok', jwtWithExp(-600));   // expired 10 minutes ago
+{
+  const life = UB.downloadTokenLife();
+  check('an expired download token is detected locally', life && life.expired, true);
+  const before = shims.REQUESTS.length;
+  let msg = '(resolved)';
+  await UB.resolveDownload({ id: '13902', kind: 'track' }).then(() => {}, (e) => { msg = e.message; });
+  check('an expired token fails with how long ago it expired', /expired 10 minutes ago/.test(msg), true);
+  check('an expired token explains the ~20 minute lifetime', /20 minutes/.test(msg), true);
+  check('an expired token does not blame the plan', /plan may not cover|Insufficient/.test(msg), false);
+  check('no request is spent on a token known to be dead',
+    shims.REQUESTS.length === before, true);
+  const st = UB.downloadStatus();
+  check('downloadStatus reports the expiry for the header', st && st.tone, 'err');
+}
+UB.clearSession();
+await UB.setTokens('accountTok', jwtWithExp(900));    // 15 minutes left
+{
+  const life = UB.downloadTokenLife();
+  check('a live download token reports minutes remaining', life && life.expired === false && life.minutes === 15, true);
+  const st = UB.downloadStatus();
+  check('downloadStatus is ok while the token is healthy', st && st.tone, 'ok');
+  const r = await UB.resolveDownload({ id: '13902', kind: 'track' });
+  check('a live token proceeds to the download normally', !!r.url, true);
+}
+UB.clearSession();
+await UB.setTokens('accountTok', jwtWithExp(120));    // 2 minutes left
+check('downloadStatus warns when the token is nearly out',
+  (UB.downloadStatus() || {}).tone, 'warn');
+UB.clearSession();
+/* An opaque (non-JWT) credential has no readable expiry — unreadable is not
+   the same as invalid, so it must still be attempted. */
+await UB.setTokens('accountTok', 'opaqueDownloadCredential');
+check('an opaque download credential reports no expiry rather than failing',
+  UB.downloadTokenLife(), null);
+{
+  const r = await UB.resolveDownload({ id: '13902', kind: 'track' });
+  check('an opaque download credential is still attempted', !!r.url, true);
+}
+UB.clearSession();
+/* prod-api still needs the header form, so the gating must be per-host. Set the
+   session explicitly here rather than inheriting whatever an earlier block left
+   behind — that coupling made these two checks fail the moment a test was
+   inserted above them. */
+UB.clearSession();
+await UB.setTokens('xyzsecret', 'downloadTok');
 {
   const before = shims.REQUESTS.length;
   await UB.me().catch(() => {});
