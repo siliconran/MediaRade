@@ -423,8 +423,17 @@ const NO_V2_TOKEN_MSG =
   'ENTIRE Cookie header (or a Cookie-Editor export) for uppbeat.io into the big box and press "Use this Cookie header".';
 
 function explainStatus(status, what, res) {
-  if (status === 401 || status === 403) {
-    return 'Uppbeat refused the request (' + status + '). Your session is missing or expired — press ' +
+  if (status === 403) {
+    /* 403 is "Insufficient privileges" — an entitlement answer, not a session
+       one. The commonest cause is asking for a format the plan does not
+       include (wav returns 403 while mp3 returns 200 for the same track), so
+       do not send people off to re-import a session that is working fine. */
+    return 'Uppbeat allowed the session but not this request (403 — insufficient privileges). Usually the ' +
+           'audio format: WAV needs a plan that includes it, while MP3 is allowed. Set Setup › Audio format ' +
+           'to mp3, or upgrade the Uppbeat plan. It can also mean the track itself is outside your plan.';
+  }
+  if (status === 401) {
+    return 'Uppbeat refused the request (401). Your session is missing or expired — press ' +
            '"Sign in" to re-open uppbeat.io in your browser and pick the session up again.';
   }
   if (status === 402) return 'This track needs a paid Uppbeat plan your account does not have.';
@@ -1557,11 +1566,16 @@ export const Uppbeat = {
     if (isSfx && !track.variantId) {
       return Promise.reject(new Error('This sound effect is missing its variant id, which Uppbeat\'s download endpoint requires. Re-run the search so the catalogue row is refreshed.'));
     }
-    /* The SPA maps its file-format setting to mp3/wav; anything else Uppbeat
-       does not offer here, so fall back to mp3 rather than sending junk. */
+    /* Uppbeat offers mp3 and wav only, and WAV is an ENTITLEMENT, not just a
+       preference: an account without it gets 403 "Insufficient privileges" for
+       ?format=wav while ?format=mp3 returns 200 (measured on this account).
+       The panel's audioFormat setting is the YouTube/yt-dlp one (wav, flac,
+       opus…), so mapping it straight through made every Uppbeat download fail
+       for anyone whose global preference was wav. Ask for wav only when it is
+       explicitly wanted, and fall back to mp3 when Uppbeat says no. */
     const want = String(Config.get('audioFormat') || 'mp3').toLowerCase();
-    const format = want === 'wav' ? 'wav' : 'mp3';
-    const url = fill(tpl, { id: track.id, variantId: track.variantId || '' }) + '?format=' + format;
+    const first = want === 'wav' ? 'wav' : 'mp3';
+    const base = fill(tpl, { id: track.id, variantId: track.variantId || '' });
 
     if (!session.cookies) {
       return Promise.reject(new Error('No Uppbeat session — press "Sign in" and import your session before downloading.'));
@@ -1573,12 +1587,23 @@ export const Uppbeat = {
        explanation rather than earning a 500. */
     if (!canAttemptDownload()) return Promise.reject(new Error(NO_V2_TOKEN_MSG));
 
-    return httpGet(url, { follow: false, accept: 'application/json, audio/*, */*' })
+    function attempt(format, allowFallback) {
+      return httpGet(base + '?format=' + format, { follow: false, accept: 'application/json, audio/*, */*' })
       .then(function (res) {
+        /* 403 here is "your plan does not include this FORMAT", not "no
+           access to the track" — the same track returns 200 as mp3. Downgrade
+           once and record it, rather than failing a download the account is
+           perfectly entitled to. */
+        if (res.status === 403 && allowFallback && format !== 'mp3') {
+          try { Paths.log('uppbeat: ' + format + ' is not included in this plan (403) — retrying as mp3'); } catch (e) {}
+          return attempt('mp3', false).then(function (r) {
+            return Object.assign({}, r, { downgradedFrom: format });
+          });
+        }
         if (res.status >= 300 && res.status < 400 && res.headers.location) {
           const loc = res.headers.location.indexOf('http') === 0
             ? res.headers.location : BASE + res.headers.location;
-          return { url: loc, licenseCode: null, pageUrl: null, licenseId: null };
+          return { url: loc, format: format, licenseCode: null, pageUrl: null, licenseId: null };
         }
         if (res.status !== 200) throw new Error(explainStatus(res.status, 'download', res));
         const ct = String((res.headers && res.headers['content-type']) || '').toLowerCase();
@@ -1591,16 +1616,21 @@ export const Uppbeat = {
           if (link) {
             return {
               url: String(link),
+              format: format,
               licenseCode: pick(json, ['licenseCode', 'license_code', 'data.licenseCode']) || null,
               pageUrl: pick(json, ['pageUrl', 'page_url', 'data.pageUrl']) || null,
               licenseId: pick(json, ['licenseId', 'license_id', 'data.licenseId']) || null
             };
           }
         }
-        if (audioish) return { url: url, licenseCode: null, pageUrl: null, licenseId: null };
+        if (audioish) return { url: base + '?format=' + format, format: format,
+                               licenseCode: null, pageUrl: null, licenseId: null };
         throw new Error('Uppbeat did not return a download URL for this track (HTTP ' + res.status +
                         ' ' + ct + '). Your plan may not cover it, or the download endpoint moved.');
       });
+    }
+
+    return attempt(first, true);
   },
 
   /**
@@ -1609,14 +1639,15 @@ export const Uppbeat = {
    */
   download: function (track, onProgress) {
     const dir = CEP.path.join(Paths.dir('audio'), 'Uppbeat');
-    const want = String(Config.get('audioFormat') || 'mp3').toLowerCase();
-    const ext = want === 'wav' ? 'wav' : 'mp3';
-    const name = U.slug(track.artist + ' - ' + track.title) + '.' + ext;
-    const dest = Paths.unique(CEP.path.join(dir, name));
 
     let inner = null, resolved = null;
     const p = Uppbeat.resolveDownload(track).then(function (r) {
       resolved = r;
+      /* Name the file after what Uppbeat ACTUALLY served. Asking for wav on a
+         plan without it silently yields mp3, and a .wav named file holding mp3
+         bytes breaks Premiere's import. */
+      const ext = r.format === 'wav' ? 'wav' : 'mp3';
+      const dest = Paths.unique(CEP.path.join(dir, U.slug(track.artist + ' - ' + track.title) + '.' + ext));
       inner = httpDownload(r.url, dest, onProgress);
       return inner;
     }).then(function (res) {
@@ -1628,7 +1659,9 @@ export const Uppbeat = {
                                      page: resolved.pageUrl || track.page })
         : track;
       return Object.assign({ track: full, credit: Uppbeat.credit(full),
-                             licenseCode: (resolved && resolved.licenseCode) || null }, res);
+                             licenseCode: (resolved && resolved.licenseCode) || null,
+                             format: (resolved && resolved.format) || 'mp3',
+                             downgradedFrom: (resolved && resolved.downgradedFrom) || null }, res);
     });
 
     p.cancel = function () { if (inner && inner.cancel) inner.cancel(); };
