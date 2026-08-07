@@ -273,6 +273,36 @@ function canAttemptDownload() {
   return !!session.authorizationToken;
 }
 
+/** How much life is left in the download credential.
+
+    Uppbeat's `authorization_token` is a JWT with a TWENTY MINUTE lifetime
+    (measured: iat 05:47:33 -> exp 06:07:33). A pasted one is therefore stale
+    within the hour, and an expired one answers
+    `401 WWW-Authenticate: Bearer error="invalid_token"` with an empty body —
+    indistinguishable, to a user, from "your whole session is broken". Since the
+    token says its own expiry, read it locally and be specific instead.
+
+    Returns { exp, expired, minutes } or null when there is no decodable JWT
+    (an opaque credential is not necessarily invalid — only unreadable). */
+function downloadTokenLife() {
+  const claims = jwtPayload(session.authorizationToken || '');
+  if (!claims || !claims.exp) return null;
+  const ms = Number(claims.exp) * 1000;
+  if (!isFinite(ms)) return null;
+  const left = ms - Date.now();
+  return { exp: ms, expired: left <= 0, minutes: Math.round(left / 60000) };
+}
+
+/** Human phrasing for an expired download credential. */
+function expiredTokenMsg(life) {
+  const ago = Math.max(1, -life.minutes);
+  return 'Your Uppbeat download token expired ' + ago + ' minute' + (ago === 1 ? '' : 's') + ' ago. ' +
+    'Uppbeat issues `authorization_token` as a JWT that is only valid for about 20 minutes, so a pasted ' +
+    'one goes stale quickly — this is not a fault in the panel or your plan. Paste a fresh ' +
+    '`authorization_token` from a signed-in uppbeat.io tab, or use "Sign in with email & password", ' +
+    'which mints a new one each time.';
+}
+
 /**
  * Fetch a URL with the imported Uppbeat session attached. Defaults to GET;
  * pass `{ method:'POST', body:'…' }` for the endpoints that need it (the
@@ -814,6 +844,23 @@ export const Uppbeat = {
   isPremium: function () {
     const p = String(session.plan || 'free').toLowerCase();
     return session.signedIn && p !== 'free' && p !== 'none';
+  },
+
+  /** Remaining life of the download credential: { exp, expired, minutes }, or
+      null when it carries no readable expiry. The UI uses this to warn before
+      a download is attempted rather than after it fails. */
+  downloadTokenLife: function () { return downloadTokenLife(); },
+
+  /** One line describing whether downloads can work right now, for the panel
+      header. Returns null when there is nothing worth saying. */
+  downloadStatus: function () {
+    if (!session.cookies) return null;
+    if (!canAttemptDownload()) return { tone: 'err', text: 'Downloads unavailable — no authorization_token in this session.' };
+    const life = downloadTokenLife();
+    if (!life) return null;
+    if (life.expired) return { tone: 'err', text: 'Download token expired ' + Math.max(1, -life.minutes) + ' min ago — paste a fresh authorization_token.' };
+    return { tone: life.minutes <= 3 ? 'warn' : 'ok',
+             text: 'Download token valid for ' + life.minutes + ' more minute' + (life.minutes === 1 ? '' : 's') + '.' };
   },
 
   /** Open Uppbeat's login page in the real browser. No password ever reaches MediaRade. */
@@ -1586,6 +1633,9 @@ export const Uppbeat = {
        that cookie and there is no JWT to send as Bearer. Refuse with an
        explanation rather than earning a 500. */
     if (!canAttemptDownload()) return Promise.reject(new Error(NO_V2_TOKEN_MSG));
+    /* The token dates itself — don't spend a request to be told it is stale. */
+    const life = downloadTokenLife();
+    if (life && life.expired) return Promise.reject(new Error(expiredTokenMsg(life)));
 
     function attempt(format, allowFallback) {
       return httpGet(base + '?format=' + format, { follow: false, accept: 'application/json, audio/*, */*' })
