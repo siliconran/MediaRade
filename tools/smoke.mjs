@@ -945,6 +945,29 @@ check('normalizeChannel keeps the id, name and url',
     handle: null, thumb: '', subs: 12, description: '' });
 check('normalizeChannel drops a row with no id', MR.Search.normalizeChannel({ channel: 'x' }), null);
 
+/* A channel avatar and a channel banner arrive mixed in one thumbnail list,
+   telling apart only by aspect ratio: an avatar is square, a banner ~6:1.
+   Picking the first/largest would put the banner in the avatar circle. */
+check('pickChannelArt separates the square avatar from the wide banner',
+  MR.Search.pickChannelArt([
+    { url: 'banner-small', width: 1060, height: 175 },
+    { url: 'avatar-small', width: 176, height: 176 },
+    { url: 'banner-big', width: 2560, height: 424 },
+    { url: 'avatar-big', width: 900, height: 900 }
+  ]),
+  { avatar: 'avatar-big', banner: 'banner-big' });
+check('pickChannelArt still returns something when nothing is square',
+  MR.Search.pickChannelArt([{ url: 'only-banner', width: 2560, height: 424 }]).avatar,
+  'only-banner');
+check('pickChannelArt tolerates missing dimensions and an empty list',
+  [MR.Search.pickChannelArt([{ url: 'x' }]).avatar, MR.Search.pickChannelArt([]).avatar],
+  ['x', null]);
+check('channelPage is exposed', typeof MR.Search.channelPage, 'function');
+await MR.Search.channelPage('not a channel').then(
+  () => check('channelPage rejects a non-channel address', 'resolved', 'rejected'),
+  (e) => check('channelPage rejects a non-channel address',
+    /does not look like a YouTube channel/.test(e.message), true));
+
 section('inbox handover');
 check('Inbox is exposed', typeof MR.Inbox, 'object');
 check('a job needs an http url',

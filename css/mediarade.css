@@ -790,3 +790,31 @@ body.is-dragging-media .mr-dock__body { display: block; }
   padding: 8px 10px; margin: 8px 0 0;
 }
 .mr-directbar .ps2-caption { margin-right: auto; }
+
+/* Channel header — mirrors what YouTube shows above a channel's uploads, so a
+   channel view reads as "you are inside this channel" rather than as a search
+   result list that happens to be filtered. */
+.mr-chanhead {
+  border: 1px solid var(--ps2-line, rgba(255,255,255,0.12));
+  border-radius: 8px; overflow: hidden; margin-bottom: 12px;
+  background: var(--ps2-panel, rgba(255,255,255,0.04));
+}
+.mr-chanhead__banner {
+  height: 96px; background-size: cover; background-position: center;
+  border-bottom: 1px solid var(--ps2-line, rgba(255,255,255,0.12));
+}
+.mr-chanhead__row {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+}
+.mr-chanhead__avatar {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+  object-fit: cover; background: rgba(255,255,255,0.08);
+}
+.mr-chanhead__avatar--blank { display: block; }
+.mr-chanhead__meta { min-width: 0; flex: 1; }
+.mr-chanhead__name {
+  font-size: 18px; font-weight: 700; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mr-chanhead__tick { margin-left: 6px; font-size: 12px; opacity: 0.75; }
+.mr-chanhead__desc { margin-top: 4px; white-space: normal; }

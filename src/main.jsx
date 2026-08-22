@@ -16,6 +16,7 @@ import Premiere from './core/premiere.js';
 import YtDlp from './core/ytdlp.js';
 import Proc from './core/proc.js';
 import U from './core/util.js';
+import Inbox from './core/inbox.js';
 
 import Ambient from './ui/ambient.js';
 import { wireNav, Nav, Rail, StatusChips } from './ui/nav.jsx';
@@ -24,7 +25,6 @@ import Acquire from './ui/acquire.js';
 import License from './core/license.js';
 import Uppbeat from './core/uppbeat.js';
 import SP from './core/sp.js';
-import Inbox from './core/inbox.js';
 import Queue from './core/queue.js';
 import BrowseView, { focusSearch } from './views/browse.jsx';
 import VideoView from './views/video.jsx';

@@ -119,15 +119,20 @@ export function BrowseView() {
     }).catch(function (e) { setChanBusy(false); setChanError(e.message); });
   }
 
-  /** Load one channel's uploads into the normal results grid. */
+  /** Open a channel: its header AND only its uploads, the way YouTube shows a
+      channel. One read returns both, so the avatar/name/subscriber line is
+      filled from the same call that fetches the videos. */
   function openChannel(ch) {
     setChanBusy(true); setChanError(null);
+    /* Seed the header with whatever the caller already knows so the banner is
+       not blank while the real metadata loads. */
     setChannelView(ch);
     Bus.patch({ searching: true, searchError: null, results: [] }, 'search');
-    Search.channelVideos(ch).then(function (results) {
+    Search.channelPage(ch).then(function (page) {
       setChanBusy(false);
-      Bus.patch({ results: results, searching: false }, 'search');
-      if (Config.get('autoVerify')) Search.verifyAll(results, null);
+      setChannelView(Object.assign({}, ch, page.channel));
+      Bus.patch({ results: page.videos, searching: false }, 'search');
+      if (Config.get('autoVerify')) Search.verifyAll(page.videos, null);
     }).catch(function (e) {
       setChanBusy(false);
       setChannelView(null);
@@ -299,17 +304,41 @@ export function BrowseView() {
           </Show>
         </Show>
 
-        {/* Banner while a channel's uploads occupy the results grid. */}
+        {/* Channel header: what you would see at the top of the channel on
+            YouTube — banner, avatar, name, handle and subscriber count — above
+            a grid holding only that channel's uploads. */}
         <Show when={channelView()}>
-          <div class="ps2-panel" style={{
-            display: 'flex', gap: '10px', 'align-items': 'center',
-            'justify-content': 'space-between', padding: '8px 10px', 'margin-bottom': '10px'
-          }}>
-            <span style={{ 'min-width': 0 }}>
-              <span class="ps2-caption">Uploads from</span>{' '}
-              <b>{channelView().name || channelView().url}</b>
-            </span>
-            <Btn size="sm" variant="ghost" label="Back to channels" onClick={leaveChannel} />
+          <div class="mr-chanhead">
+            <Show when={channelView().banner}>
+              <div class="mr-chanhead__banner"
+                style={{ 'background-image': 'url("' + channelView().banner + '")' }} />
+            </Show>
+            <div class="mr-chanhead__row">
+              <Show when={channelView().avatar}
+                fallback={<div class="mr-chanhead__avatar mr-chanhead__avatar--blank" />}>
+                <img class="mr-chanhead__avatar" src={channelView().avatar} alt="" />
+              </Show>
+              <div class="mr-chanhead__meta">
+                <div class="mr-chanhead__name">
+                  {channelView().name || channelView().url}
+                  <Show when={channelView().verified}>
+                    <span class="mr-chanhead__tick" title="Verified by YouTube">✓</span>
+                  </Show>
+                </div>
+                <div class="ps2-caption">
+                  {[channelView().handle,
+                    channelView().subs ? U.compact(channelView().subs) + ' subscribers' : null,
+                    state.results.length ? state.results.length + ' videos shown' : null]
+                    .filter(Boolean).join(' · ')}
+                </div>
+                <Show when={channelView().description}>
+                  <div class="ps2-caption mr-chanhead__desc">
+                    {U.truncate(channelView().description, 160)}
+                  </div>
+                </Show>
+              </div>
+              <Btn size="sm" variant="ghost" label="Back to channels" onClick={leaveChannel} />
+            </div>
           </div>
         </Show>
 

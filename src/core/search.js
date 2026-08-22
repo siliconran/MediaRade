@@ -304,6 +304,69 @@ export const Search = {
     return 'https://www.youtube.com/' + m[1].replace(/\/+$/, '') + '/videos';
   },
 
+  /** Pick the squarest thumbnail as the avatar and the widest as the banner.
+      yt-dlp returns both mixed together in one list, distinguishable only by
+      aspect ratio — a channel avatar is square, a banner is ~6:1. */
+  pickChannelArt: function (thumbs) {
+    const list = (thumbs || []).filter(function (t) { return t && t.url; });
+    let avatar = null, banner = null, avatarW = 0, widest = 0;
+    list.forEach(function (t) {
+      const w = Number(t.width) || 0, h = Number(t.height) || 0;
+      if (!w || !h) return;
+      const ratio = w / h;
+      /* Among the square-ish ones take the LARGEST, not the most square:
+         several are exactly 1:1, so "most square" just picked whichever came
+         first and could hand a 176px image to a HiDPI avatar slot. */
+      if (Math.abs(ratio - 1) < 0.15 && w > avatarW) { avatarW = w; avatar = t.url; }
+      if (ratio > 3 && w > widest) { widest = w; banner = t.url; }
+    });
+    /* A channel with no square art still deserves something to show. */
+    if (!avatar && list.length) avatar = list[0].url;
+    return { avatar: avatar, banner: banner };
+  },
+
+  /**
+   * A channel "page": the header AND its uploads in one read, so the panel can
+   * show what YouTube shows — avatar, name, handle, subscriber count — above a
+   * grid containing only that channel's videos.
+   * @returns {Promise<{channel:object, videos:object[]}>}
+   */
+  channelPage: function (channel, count) {
+    const raw = channel && typeof channel === 'object' ? (channel.url || channel.id) : channel;
+    const url = Search.channelUrl(raw) ||
+      (/^UC[\w\-]{20,}$/.test(String(raw || '')) ? 'https://www.youtube.com/channel/' + raw + '/videos' : null);
+    if (!url) return Promise.reject(new Error('That does not look like a YouTube channel address.'));
+
+    return YtDlp.playlistPage(url, count || Config.get('resultCount') || 25).then(function (json) {
+      const art = Search.pickChannelArt(json.thumbnails);
+      const name = json.channel || json.uploader || json.title || '';
+      /* A channel's flat-playlist entries inherit the uploader from the page
+         rather than carrying it themselves, so every card would otherwise show
+         a blank channel name. Stamp it back on from the header. */
+      const videos = (json.entries || []).map(function (e) {
+        const row = Search.normalize(e);
+        if (row && !row.channel && name) row.channel = name;
+        return row;
+      }).filter(Boolean);
+      return {
+        channel: {
+          id: json.channel_id || json.id || '',
+          name: json.channel || json.uploader || json.title || 'Unknown channel',
+          handle: json.uploader_id && String(json.uploader_id).charAt(0) === '@'
+            ? String(json.uploader_id) : null,
+          url: json.channel_url || json.uploader_url || url.replace(/\/videos$/, ''),
+          subs: json.channel_follower_count || null,
+          verified: !!json.channel_is_verified,
+          description: json.description || '',
+          avatar: art.avatar,
+          banner: art.banner,
+          videoCount: json.playlist_count || null
+        },
+        videos: videos
+      };
+    });
+  },
+
   /** List a channel's uploads. Accepts anything channelUrl understands, or a
       channel object from `channels`. */
   channelVideos: function (channel, count) {

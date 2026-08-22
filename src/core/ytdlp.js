@@ -168,6 +168,27 @@ export const YtDlp = {
    * Search. `spUrl` (from SP.build) is preferred because it lets YouTube do
    * the Creative Commons filtering server-side; falls back to ytsearchN:.
    */
+  /**
+   * Read a playlist/channel page WHOLE — the top-level object as well as the
+   * entries. `search` throws the envelope away, but a channel's name, handle,
+   * avatar, banner and subscriber count only exist up there, so a channel
+   * header cannot be built without it.
+   */
+  playlistPage: function (url, count) {
+    YtDlp.requireReady();
+    count = count || 30;
+    const args = YtDlp.commonArgs().concat([
+      '-J', '--flat-playlist', '--playlist-end', String(count), url
+    ]);
+    return Proc.run(YtDlp.ytdlp, args, { timeout: 90000 }).then(function (r) {
+      if (r.code !== 0) throw new Error(YtDlp.explain(r.stderr) || ('channel read failed (exit ' + r.code + ')'));
+      let json;
+      try { json = JSON.parse(r.stdout); }
+      catch (e) { throw new Error('yt-dlp returned unreadable channel data'); }
+      return json || {};
+    });
+  },
+
   search: function (query, count, spUrl) {
     YtDlp.requireReady();
     count = count || 25;
