@@ -172,6 +172,31 @@ function ToolsPanel() {
     }).catch(function (e) { n.close(); Toast.err('Update failed', e.message); });
   }
 
+  /* A rotating exit IP (VPN/proxy) and a YouTube bot check both surface as
+     HTTP 403 on the media fetch, so the error text alone cannot tell them
+     apart. googlevideo signs each media URL against the requesting IP, so if
+     the IP moves between link and bytes, downloads fail no matter the flags.
+     Sampling the public IP a few times settles which one it is. */
+  function checkConnection() {
+    const n = Toast.show({ kind: 'info', title: 'Checking connection…',
+                           text: 'Sampling your public IP a few times.', sticky: true });
+    YtDlp.checkIpStability(3).then(function (r) {
+      n.close();
+      if (!r.sampled) {
+        Toast.err('Could not reach the IP check', 'No response from api.ipify.org — check your internet connection.');
+      } else if (r.stable) {
+        Toast.ok('Connection is stable', 'Your public IP held still across ' + r.sampled +
+          ' checks (' + r.ips[0] + '). A 403 from YouTube is therefore a bot check, not IP rotation — ' +
+          'install Node.js or set "Cookies from browser".');
+      } else {
+        Toast.err('Your IP is rotating — this breaks downloads',
+          'Saw ' + r.ips.length + ' different IPs in ' + r.sampled + ' checks: ' + r.ips.join(', ') +
+          '. YouTube ties each media link to the IP that requested it, so downloads 403 partway through. ' +
+          'Switch your VPN/proxy to a static IP, or turn it off while downloading.');
+      }
+    }).catch(function (e) { n.close(); Toast.err('Connection check failed', e.message); });
+  }
+
   return (
     <Panel title="Tooling"
       badge={<Badge text={t().ytdlp ? 'ready' : 'not ready'} kind={t().ytdlp ? 'ok' : 'crit'} />}>
@@ -190,6 +215,7 @@ function ToolsPanel() {
       <div class="ps2-row-gap ps2-wrap" style={{ marginBottom: '12px' }}>
         <Btn size="sm" variant="primary" label="Re-detect" onClick={redetect} />
         <Btn size="sm" label="Update yt-dlp" onClick={update} />
+        <Btn size="sm" label="Check connection" onClick={checkConnection} />
         <Btn size="sm" variant="ghost" label="bin folder" onClick={() => CEP.openFolder(Paths.dir('bin'))} />
       </div>
       <Row label="yt-dlp path"

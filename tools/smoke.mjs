@@ -64,7 +64,24 @@ function makeShims(win) {
     renameSync: (a, b) => { a = norm(a); b = norm(b); FILES[b] = FILES[a]; delete FILES[a]; },
     unlinkSync: (p) => { delete FILES[norm(p)]; },
     copyFileSync: (a, b) => { FILES[norm(b)] = FILES[norm(a)]; },
-    readdirSync: () => [],
+    /* Real enough for the inbox watcher: list the immediate children of a
+       directory out of the in-memory file table. Returning [] unconditionally
+       made a folder-watching feature untestable. SEP avoids a literal
+       backslash in this file. */
+    readdirSync: (p) => {
+      const SEP = String.fromCharCode(92);
+      let dir = norm(p);
+      while (dir.length && dir.charAt(dir.length - 1) === SEP) dir = dir.slice(0, -1);
+      dir += SEP;
+      const out = [];
+      Object.keys(FILES).concat(Object.keys(DIRS)).forEach((k) => {
+        if (k.indexOf(dir) !== 0) return;
+        const rest = k.slice(dir.length);
+        if (!rest || rest.indexOf(SEP) > -1) return;
+        if (out.indexOf(rest) === -1) out.push(rest);
+      });
+      return out;
+    },
     statSync: (p) => {
       p = norm(p);
       if (!(p in FILES) && !DIRS[p]) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }
@@ -877,6 +894,60 @@ MR.Uppbeat.loadSession();
 check('loadSession re-derives plan from a stored JWT even when config says free',
   MR.Uppbeat.session().plan, 'creator');
 UB.clearSession();
+
+section('channel search');
+check('channelUrl accepts a bare @handle',
+  MR.Search.channelUrl('@MrBeast'), 'https://www.youtube.com/@MrBeast/videos');
+check('channelUrl accepts a full handle URL',
+  MR.Search.channelUrl('https://www.youtube.com/@LofiGirl'), 'https://www.youtube.com/@LofiGirl/videos');
+check('channelUrl accepts a /channel/UC… URL',
+  MR.Search.channelUrl('https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow/featured'),
+  'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow/videos');
+check('channelUrl accepts legacy /c/ and /user/ forms',
+  [MR.Search.channelUrl('youtube.com/c/Something'), MR.Search.channelUrl('youtube.com/user/Someone')],
+  ['https://www.youtube.com/c/Something/videos', 'https://www.youtube.com/user/Someone/videos']);
+check('channelUrl rejects a plain video link',
+  MR.Search.channelUrl('https://www.youtube.com/watch?v=aaaaaaaaaaa'), null);
+check('channelUrl rejects free text', MR.Search.channelUrl('lofi beats'), null);
+check('normalizeChannel keeps the id, name and url',
+  MR.Search.normalizeChannel({ id: 'UC123', channel: 'Lofi Girl',
+    url: 'https://www.youtube.com/channel/UC123', channel_follower_count: 12 }),
+  { id: 'UC123', name: 'Lofi Girl', url: 'https://www.youtube.com/channel/UC123',
+    handle: null, thumb: '', subs: 12, description: '' });
+check('normalizeChannel drops a row with no id', MR.Search.normalizeChannel({ channel: 'x' }), null);
+
+section('inbox handover');
+check('Inbox is exposed', typeof MR.Inbox, 'object');
+check('a job needs an http url',
+  [MR.Inbox.parse('{"url":"not a url"}'), MR.Inbox.parse('{}'), MR.Inbox.parse('nonsense')],
+  [null, null, null]);
+check('a valid job parses with video as the default kind',
+  MR.Inbox.parse('{"url":"https://www.youtube.com/watch?v=abcdefghijk","from":"FictusTube"}'),
+  { url: 'https://www.youtube.com/watch?v=abcdefghijk', kind: 'video', title: '', from: 'FictusTube' });
+check('a job can ask for audio',
+  MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","kind":"AUDIO","title":"t"}').kind, 'audio');
+check('an unknown kind falls back to video',
+  MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","kind":"flac"}').kind, 'video');
+{
+  /* A job must be picked up, acted on, and moved out of the way so a restart
+     cannot download it a second time. */
+  /* Ask the app where its inbox is rather than hardcoding a path — the test
+     then cannot drift from Paths.dir(). */
+  const SEP = String.fromCharCode(92);
+  const inbox = MR.Paths.dir('inbox');
+  shims.DIRS[inbox] = true;
+  shims.FILES[inbox + SEP + 'job1.json'] =
+    '{"url":"https://www.youtube.com/watch?v=zzzzzzzzzzz","kind":"audio","from":"FictusTube"}';
+  const seen = [];
+  const offJob = MR.Bus.on('inbox:job', (j) => seen.push(j));
+  const jobs = MR.Inbox.scan();
+  offJob();
+  check('scan picks the job up', jobs.length, 1);
+  check('scan announces it on the bus', seen.length && seen[0].from, 'FictusTube');
+  check('the job file is moved out of the inbox',
+    !!shims.FILES[inbox + SEP + 'job1.json'], false);
+  check('re-scanning does not replay the job', MR.Inbox.scan().length, 0);
+}
 
 section('browse cards');
 const info0 = { id: 'bbbbbbbbbbb', title: 'Genuine CC BY clip', channel: 'Real Creator',

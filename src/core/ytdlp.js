@@ -98,6 +98,49 @@ export const YtDlp = {
     return a;
   },
 
+  /**
+   * Sample the public IP several times and report whether it holds still.
+   *
+   * This exists because a rotating exit IP is indistinguishable, from the
+   * error text alone, from a YouTube bot check: both surface as HTTP 403 on
+   * the media fetch. googlevideo signs every media URL against the IP that
+   * requested it, so a VPN that hands out a different exit IP per connection
+   * breaks downloads no matter what yt-dlp flags are used — the link is
+   * fetched from one address and the bytes are asked for from another.
+   *
+   * @returns {Promise<{stable:boolean, ips:string[], sampled:number}>}
+   */
+  checkIpStability: function (samples) {
+    const n = Math.max(2, Math.min(5, samples || 3));
+    let https;
+    try { https = CEP.require('https'); }
+    catch (e) { return Promise.reject(new Error('Node is unavailable in this panel, so the connection check cannot run.')); }
+
+    function once() {
+      return new Promise(function (resolve) {
+        const req = https.get({ hostname: 'api.ipify.org', path: '/', timeout: 12000,
+                                headers: { 'User-Agent': 'MediaRade' } }, function (res) {
+          let b = '';
+          res.setEncoding('utf8');
+          res.on('data', function (c) { b += c; });
+          res.on('end', function () { resolve(String(b).trim() || null); });
+        });
+        req.on('timeout', function () { req.destroy(); resolve(null); });
+        req.on('error', function () { resolve(null); });
+      });
+    }
+
+    const seen = [];
+    let chain = Promise.resolve();
+    for (let i = 0; i < n; i++) {
+      chain = chain.then(once).then(function (ip) { if (ip) seen.push(ip); });
+    }
+    return chain.then(function () {
+      const uniq = seen.filter(function (v, i) { return seen.indexOf(v) === i; });
+      return { stable: uniq.length <= 1, ips: uniq, sampled: seen.length };
+    });
+  },
+
   /* --- metadata --------------------------------------------------------- */
 
   /**
@@ -403,7 +446,13 @@ export const YtDlp = {
        'ffmpeg is required for this format. Install it or set its path in Settings.'],
       [/HTTP Error 429|Too Many Requests/i, 'YouTube is rate-limiting you. Wait a few minutes, or set a rate limit in Settings.'],
       [/HTTP Error 403|HTTP 403/i,
-       'YouTube refused the media request (HTTP 403) — usually a bot/"n" challenge check. MediaRade now auto-solves this via yt-dlp\'s JS solver. If you still see it, install a JS runtime (Node.js) or set "Cookies from browser" in Settings.'],
+       'YouTube refused the media data (HTTP 403). The usual cause is NOT a bot check: googlevideo ties every ' +
+       'media URL to the IP that asked for it, so if your connection changes IP between fetching the link and ' +
+       'downloading it — a VPN or proxy with rotating exit IPs does exactly that — every chunk after the ' +
+       'first is refused. Press "Check connection" in Settings to see whether your IP is stable. If it is ' +
+       'rotating, switch the VPN to a static/dedicated IP or turn it off while downloading. If your IP IS ' +
+       'stable, then it is a bot check: install Node.js so yt-dlp can solve the "n" challenge, or set ' +
+       '"Cookies from browser" in Settings.'],
       [/Unable to download webpage|getaddrinfo|ENOTFOUND|timed out/i, 'Network error reaching YouTube.'],
       [/Requested format is not available/i, 'That quality is not available for this video. Try a lower cap or "Best".'],
       [/No space left|ENOSPC/i, 'The drive is full.']

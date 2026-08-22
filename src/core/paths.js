@@ -36,6 +36,11 @@ const Paths = {
       compliance:  p.join(root, 'Compliance'),
       logs:        p.join(root, 'Logs'),
       bin:         p.join(root, 'bin'),
+      /* Drop-box other apps write jobs into (FictusTube, FurcaTube, …).
+         A folder rather than a port: the panel has no server, and a file
+         survives MediaRade not being open at the time. */
+      inbox:       p.join(root, 'Inbox'),
+      inboxDone:   p.join(root, 'Inbox', 'processed'),
       cache:       p.join(root, 'Cache')
     };
     return map[key] || root;
@@ -67,7 +72,7 @@ const Paths = {
   /** Build the whole tree + drop the explainer file. Idempotent. */
   bootstrap: function () {
     ['root', 'downloads', 'video', 'audio', 'thumbs', 'subs', 'licenses',
-     'compliance', 'logs', 'bin', 'cache'].forEach(function (k) {
+     'compliance', 'logs', 'bin', 'cache', 'inbox', 'inboxDone'].forEach(function (k) {
       Paths.ensureDir(Paths.dir(k));
     });
 

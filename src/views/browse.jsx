@@ -24,6 +24,14 @@ export function BrowseView() {
   const [open, setOpen] = createSignal(false);
   const [strict] = useConfig('strictMode');
   const [verify, setVerify] = createSignal(null);
+  /* 'videos' searches clips; 'channels' searches channels, then drills into one.
+     `channelView` holds the channel whose uploads are currently in the grid, so
+     the normal result cards (and every licence check) are reused unchanged. */
+  const [mode, setMode] = createSignal('videos');
+  const [channels, setChannels] = createSignal([]);
+  const [channelView, setChannelView] = createSignal(null);
+  const [chanBusy, setChanBusy] = createSignal(false);
+  const [chanError, setChanError] = createSignal(null);
 
   let input;
 
@@ -49,7 +57,44 @@ export function BrowseView() {
       Bus.emit('nav', 'settings');
       return;
     }
+    /* A pasted channel address is unambiguous, so honour it in either mode
+       rather than running it as a text search that would return nothing. */
+    const asChannel = Search.channelUrl(q);
+    if (asChannel) { openChannel({ url: q, name: q }); return; }
+
+    if (mode() === 'channels') { searchChannels(q); return; }
+    setChannelView(null);
     Search.run(q, filters).catch(function () { /* rendered by the store */ });
+  }
+
+  function searchChannels(q) {
+    setChanBusy(true); setChanError(null); setChannels([]); setChannelView(null);
+    Search.channels(q).then(function (list) {
+      setChanBusy(false);
+      setChannels(list);
+      if (!list.length) setChanError('No channels matched "' + q + '".');
+    }).catch(function (e) { setChanBusy(false); setChanError(e.message); });
+  }
+
+  /** Load one channel's uploads into the normal results grid. */
+  function openChannel(ch) {
+    setChanBusy(true); setChanError(null);
+    setChannelView(ch);
+    Bus.patch({ searching: true, searchError: null, results: [] }, 'search');
+    Search.channelVideos(ch).then(function (results) {
+      setChanBusy(false);
+      Bus.patch({ results: results, searching: false }, 'search');
+      if (Config.get('autoVerify')) Search.verifyAll(results, null);
+    }).catch(function (e) {
+      setChanBusy(false);
+      setChannelView(null);
+      Bus.patch({ searching: false, searchError: e.message, results: [] }, 'search');
+    });
+  }
+
+  function leaveChannel() {
+    setChannelView(null);
+    Bus.patch({ results: [], searching: false, searchError: null }, 'search');
   }
 
   function setFilter(k, v) {
@@ -85,6 +130,20 @@ export function BrowseView() {
             placeholder="Search YouTube, or paste a video URL / ID…"
             onKeyDown={(e) => { if (e.key === 'Enter') doSearch(); }} />
           <Btn variant="primary" label="Search" onClick={doSearch} />
+        </div>
+
+        <div class="mr-filters__group" style={{ gap: '4px' }}>
+          <For each={[['videos', 'Videos'], ['channels', 'Channels']]}>
+            {(m) => (
+              <Chip label={m[1]} active={mode() === m[0]}
+                onClick={() => {
+                  if (mode() === m[0]) return;
+                  setMode(m[0]);
+                  setChannels([]); setChannelView(null); setChanError(null);
+                  Bus.patch({ results: [], searchError: null }, 'search');
+                }} />
+            )}
+          </For>
         </div>
 
         <button class={'mr-filters-toggle' + (hasCustom() ? ' is-active' : '')}
@@ -135,6 +194,61 @@ export function BrowseView() {
       </div>
 
       <div class="mr-view__body">
+        {/* Channel results: only in Channels mode, and only until one is opened. */}
+        <Show when={mode() === 'channels' && !channelView()}>
+          <Show when={chanBusy()}>
+            <div style={{ padding: '4px 0 14px' }}>
+              <Progress indeterminate />
+              <div class="ps2-caption" style={{ marginTop: '8px', textAlign: 'center' }}>Searching channels…</div>
+            </div>
+          </Show>
+          <Show when={!chanBusy() && chanError()}>
+            <Empty title="No channels found" hint={U.esc(chanError())} />
+          </Show>
+          <Show when={!chanBusy() && !chanError() && !channels().length}>
+            <Empty title="Find a channel"
+              hint={'Search by name, or paste a channel URL or @handle.<br>' +
+                'Open one to list its uploads — every video is still licence-checked before it can download.'} />
+          </Show>
+          <Show when={!chanBusy() && channels().length}>
+            <div class="mr-results">
+              <For each={channels()}>
+                {(ch) => (
+                  <button class="ps2-panel" style={{
+                    display: 'flex', gap: '10px', alignItems: 'center', width: '100%',
+                    padding: '10px', textAlign: 'left', cursor: 'pointer'
+                  }} title={'Open ' + ch.name + ' and list its uploads'} onClick={() => openChannel(ch)}>
+                    <Show when={ch.thumb}>
+                      <img src={ch.thumb} alt="" width="48" height="48"
+                        style={{ 'border-radius': '50%', 'flex-shrink': 0, 'object-fit': 'cover' }} />
+                    </Show>
+                    <span style={{ 'min-width': 0 }}>
+                      <span style={{ display: 'block', 'font-weight': 600 }}>{ch.name}</span>
+                      <span class="ps2-caption" style={{ display: 'block' }}>
+                        {(ch.subs ? U.compact(ch.subs) + ' subscribers' : (ch.handle || 'channel'))}
+                      </span>
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
+
+        {/* Banner while a channel's uploads occupy the results grid. */}
+        <Show when={channelView()}>
+          <div class="ps2-panel" style={{
+            display: 'flex', gap: '10px', 'align-items': 'center',
+            'justify-content': 'space-between', padding: '8px 10px', 'margin-bottom': '10px'
+          }}>
+            <span style={{ 'min-width': 0 }}>
+              <span class="ps2-caption">Uploads from</span>{' '}
+              <b>{channelView().name || channelView().url}</b>
+            </span>
+            <Btn size="sm" variant="ghost" label="Back to channels" onClick={leaveChannel} />
+          </div>
+        </Show>
+
         <Show when={state.searching}>
           <div style={{ padding: '4px 0 14px' }}>
             <Progress indeterminate />
@@ -147,7 +261,7 @@ export function BrowseView() {
             action={<Btn variant="primary" label="Try again" onClick={doSearch} />} />
         </Show>
 
-        <Show when={!state.searching && !state.searchError && !state.results.length}>
+        <Show when={mode() === 'videos' && !state.searching && !state.searchError && !state.results.length}>
           <Empty title="Nothing here yet"
             hint={'Search for footage or music, or paste a YouTube link.<br>' +
               "Every result is checked against YouTube's licence field before it can be downloaded."} />

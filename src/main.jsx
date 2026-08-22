@@ -19,10 +19,12 @@ import U from './core/util.js';
 
 import Ambient from './ui/ambient.js';
 import { wireNav, Nav, Rail, StatusChips } from './ui/nav.jsx';
-import './ui/toast.js';
+import Toast from './ui/toast.js';
+import Acquire from './ui/acquire.js';
 import License from './core/license.js';
 import Uppbeat from './core/uppbeat.js';
 import SP from './core/sp.js';
+import Inbox from './core/inbox.js';
 import Queue from './core/queue.js';
 import BrowseView, { focusSearch } from './views/browse.jsx';
 import VideoView from './views/video.jsx';
@@ -135,6 +137,31 @@ function fatal(err) {
   ]));
 }
 
+/* --- inbox ------------------------------------------------------------------
+   Other apps (FictusTube, FurcaTube) hand a video over by dropping a JSON job
+   into Documents\MediaRade\Inbox. Downloading it goes through exactly the same
+   Acquire path as a click in the panel, so the licence gate, the ledger and the
+   sidecars all still apply — a handover must not become a way around them.
+   ---------------------------------------------------------------------------- */
+
+function wireInbox() {
+  Bus.on('inbox:job', function (job) {
+    const id = U.videoId(job.url);
+    if (!id) {
+      /* Non-YouTube links have no licence verdict path here, so say so rather
+         than silently dropping the job. */
+      Toast.err('Cannot accept that link', (job.from || 'An app') + ' sent "' + U.truncate(job.url, 60) +
+        '", which is not a YouTube video. MediaRade can only verify and download YouTube links.');
+      return;
+    }
+    Toast.info('Sent from ' + (job.from || 'another app'),
+      (job.title || job.url) + ' — checking its licence, then downloading as ' + job.kind + '.');
+    Bus.patch({ view: 'queue' });
+    Acquire.request(id, job.kind);
+  });
+  Inbox.start();
+}
+
 /* --- boot ------------------------------------------------------------------- */
 
 function run() {
@@ -143,6 +170,7 @@ function run() {
     Paths.bootstrap();
     Search.init();
     Library.load();
+    wireInbox();
     Paths.log('boot complete — MediaRade 1.3.4 by rad1x');
   } catch (e) {
     console.error('[MediaRade] startup failed:', e);
@@ -154,7 +182,7 @@ function run() {
      (localhost:8099) both reach the engine through this. */
   window.MR = {
     builtAt: __BUILD_STAMP__,
-    Config: Config, Paths: Paths, Search: Search, Library: Library, Queue: Queue,
+    Config: Config, Paths: Paths, Search: Search, Library: Library, Queue: Queue, Inbox: Inbox,
     Premiere: Premiere, YtDlp: YtDlp, License: License, Uppbeat: Uppbeat, SP: SP, Bus: Bus, U: U
   };
 

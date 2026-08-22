@@ -250,6 +250,71 @@ export const Search = {
     });
   },
 
+  /* --- channels -----------------------------------------------------------
+     Two different things live here. `channels` finds channels for a query
+     (YouTube's own search with the channel type filter). `channelVideos`
+     lists what one channel has uploaded, by pointing yt-dlp at its /videos
+     tab — a flat-playlist read, so it is one call rather than one per video.
+     ---------------------------------------------------------------------- */
+
+  /** Normalise a channel row out of yt-dlp's flat-playlist shape. */
+  normalizeChannel: function (e) {
+    if (!e) return null;
+    const id = e.channel_id || e.uploader_id || e.id;
+    if (!id) return null;
+    const url = e.url || e.channel_url || e.uploader_url ||
+      ('https://www.youtube.com/channel/' + id);
+    return {
+      id: String(id),
+      name: String(e.channel || e.uploader || e.title || 'Unknown channel'),
+      url: String(url),
+      handle: e.uploader_id && String(e.uploader_id).charAt(0) === '@' ? String(e.uploader_id) : null,
+      thumb: (e.thumbnails && e.thumbnails.length && e.thumbnails[e.thumbnails.length - 1].url) || '',
+      subs: e.channel_follower_count || null,
+      description: e.description || ''
+    };
+  },
+
+  /** Search YouTube for channels matching a query. */
+  channels: function (query, count) {
+    query = String(query || '').trim();
+    if (!query) return Promise.resolve([]);
+    /* A pasted channel/handle URL is not a search — resolve it directly. */
+    const direct = Search.channelUrl(query);
+    if (direct) {
+      return YtDlp.search(query, 1, direct).then(function (entries) {
+        return entries.map(Search.normalizeChannel).filter(Boolean);
+      });
+    }
+    const url = SP.url(query, { type: 'channel' });
+    return YtDlp.search(query, count || Config.get('resultCount') || 25, url)
+      .then(function (entries) {
+        return entries.map(Search.normalizeChannel).filter(Boolean);
+      });
+  },
+
+  /** Turn a pasted channel address into its /videos tab, or null. Accepts
+      @handle, /channel/UC…, /c/name, /user/name and a bare @handle. */
+  channelUrl: function (input) {
+    const s = String(input || '').trim();
+    if (!s) return null;
+    if (/^@[\w.\-]+$/.test(s)) return 'https://www.youtube.com/' + s + '/videos';
+    const m = s.match(/^(?:https?:\/\/)?(?:www\.|m\.)?youtube\.com\/((?:@[\w.\-]+)|(?:channel\/[\w\-]+)|(?:c\/[\w.\-]+)|(?:user\/[\w.\-]+))/i);
+    if (!m) return null;
+    return 'https://www.youtube.com/' + m[1].replace(/\/+$/, '') + '/videos';
+  },
+
+  /** List a channel's uploads. Accepts anything channelUrl understands, or a
+      channel object from `channels`. */
+  channelVideos: function (channel, count) {
+    const raw = channel && typeof channel === 'object' ? (channel.url || channel.id) : channel;
+    const url = Search.channelUrl(raw) ||
+      (/^UC[\w\-]{20,}$/.test(String(raw || '')) ? 'https://www.youtube.com/channel/' + raw + '/videos' : null);
+    if (!url) return Promise.reject(new Error('That does not look like a YouTube channel address.'));
+    return YtDlp.search('', count || Config.get('resultCount') || 25, url)
+      .then(function (entries) { return entries.map(Search.normalize); });
+  },
+
   /** Full metadata, cached. This is the call that unlocks a verdict. */
   fetchInfo: function (id, force) {
     if (!force && infoCache[id]) return Promise.resolve(infoCache[id]);
