@@ -2,7 +2,7 @@
    views/browse.jsx — search, filtering, results
    MediaRade by rad1x
    ========================================================================== */
-import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import Bus, { state } from '../core/bus.js';
 import Config from '../core/config.js';
@@ -32,6 +32,9 @@ export function BrowseView() {
   const [channelView, setChannelView] = createSignal(null);
   const [chanBusy, setChanBusy] = createSignal(false);
   const [chanError, setChanError] = createSignal(null);
+  /* A mirror of the search box. The input itself is uncontrolled, but a pasted
+     link has to be recognised the moment it lands to offer a direct action. */
+  const [raw, setRaw] = createSignal('');
 
   let input;
 
@@ -46,6 +49,46 @@ export function BrowseView() {
 
   const hasCustom = () => filters.sort !== 'relevance' || filters.duration !== 'any' ||
     filters.uploaded !== 'any' || filters.features.hd || filters.features.fourK || filters.features.subtitles;
+
+  /* --- direct links --------------------------------------------------------
+     Pasting an address should not make you search, read one result and then
+     click download. What the link points at is already unambiguous, so offer
+     the actual action straight away. Downloads still go through Acquire, so a
+     direct link gets exactly the same licence gate as a search result. */
+
+  const direct = createMemo(function () {
+    const q = raw().trim();
+    if (!q) return null;
+    const video = U.videoId(q);
+    if (video) return { kind: 'video', id: video };
+    const channel = Search.channelUrl(q);
+    if (channel) return { kind: 'channel', url: channel };
+    const playlist = U.playlistId(q);
+    if (playlist) return { kind: 'playlist', url: q, id: playlist };
+    return null;
+  });
+
+  function directDownload(kind) {
+    const d = direct();
+    if (!d || d.kind !== 'video') return;
+    Acquire.request(d.id, kind);
+  }
+
+  function directOpen() {
+    const d = direct();
+    if (!d) return;
+    if (d.kind === 'video') {
+      Bus.patch({ view: 'video', videoId: d.id, autoPlay: false, videoNonce: Date.now() });
+    } else if (d.kind === 'channel') {
+      setMode('channels');
+      openChannel({ url: d.url, name: raw().trim() });
+    } else {
+      /* A playlist is just a flat list of videos to yt-dlp, so the normal
+         search path renders it without any special casing. */
+      setChannelView(null);
+      Search.run(d.url, filters).catch(function () {});
+    }
+  }
 
   /* --- search -------------------------------------------------------------- */
 
@@ -127,7 +170,8 @@ export function BrowseView() {
       <div class="mr-view__toolbar">
         <div class="mr-searchbar">
           <input ref={input} class="ps2-input" type="text"
-            placeholder="Search YouTube, or paste a video URL / ID…"
+            placeholder="Search YouTube, or paste a video / channel / playlist link…"
+            onInput={(e) => setRaw(e.currentTarget.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') doSearch(); }} />
           <Btn variant="primary" label="Search" onClick={doSearch} />
         </div>
@@ -145,6 +189,26 @@ export function BrowseView() {
             )}
           </For>
         </div>
+
+        {/* Direct-link bar: appears the moment a recognisable address is in
+            the box, so a paste is one click from a download. */}
+        <Show when={direct()}>
+          <div class="ps2-panel mr-directbar">
+            <span class="ps2-caption">
+              {direct().kind === 'video' ? 'Video link detected'
+                : direct().kind === 'channel' ? 'Channel link detected'
+                : 'Playlist link detected'}
+            </span>
+            <Show when={direct().kind === 'video'}>
+              <Btn size="sm" variant="primary" label="Download video"
+                onClick={() => directDownload('video')} />
+              <Btn size="sm" label="Download audio" onClick={() => directDownload('audio')} />
+            </Show>
+            <Btn size="sm" variant="ghost"
+              label={direct().kind === 'video' ? 'Open' : direct().kind === 'channel' ? 'Open channel' : 'List videos'}
+              onClick={directOpen} />
+          </div>
+        </Show>
 
         <button class={'mr-filters-toggle' + (hasCustom() ? ' is-active' : '')}
           title="Sort, length, upload date and quality filters"

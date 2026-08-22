@@ -133,10 +133,31 @@ export function uid(p) {
 }
 
 /* --- youtube ----------------------------------------------------------- */
+/* Every shape a YouTube video address turns up in. Covers the old /v/ embed and
+   music.youtube.com alongside the modern ones, and tolerates a trailing ?t=,
+   &list=, tracking parameters or a copied "watch?v=…&feature=share". An 11-char
+   id on its own is accepted so a pasted id works like a link. */
 export function videoId(urlOrId) {
   const s = String(urlOrId || '').trim();
   if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
-  const m = s.match(/(?:v=|\/shorts\/|\/embed\/|youtu\.be\/|\/live\/)([A-Za-z0-9_-]{11})/);
+  const m = s.match(/(?:[?&]v=|\/shorts\/|\/embed\/|\/v\/|youtu\.be\/|\/live\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+/** True when the text is a YouTube address of any kind we understand — video,
+    channel or playlist. Used to offer a direct action instead of a search. */
+export function isYouTubeUrl(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+  return /^(?:https?:\/\/)?(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\//i.test(s);
+}
+
+/** The playlist id in a URL, or null. A watch URL carrying &list= is still a
+    single video, so this only reports a LIST-first address (/playlist?list=). */
+export function playlistId(urlOrId) {
+  const s = String(urlOrId || '').trim();
+  if (!/\/playlist\?/i.test(s)) return null;
+  const m = s.match(/[?&]list=([A-Za-z0-9_-]+)/);
   return m ? m[1] : null;
 }
 
@@ -200,7 +221,7 @@ export function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 const U = {
   $, $$, el, append, clear, icon,
   esc, hhmmss, timecode, parseTime, bytes, compact, ymd, ago,
-  slug, truncate, uid, videoId, thumb, watchUrl,
+  slug, truncate, uid, videoId, isYouTubeUrl, playlistId, thumb, watchUrl,
   debounce, sleep, pool, copy, clamp
 };
 

@@ -895,6 +895,35 @@ check('loadSession re-derives plan from a stored JWT even when config says free'
   MR.Uppbeat.session().plan, 'creator');
 UB.clearSession();
 
+section('direct links');
+check('videoId reads a standard watch URL',
+  MR.U.videoId('https://www.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw');
+check('videoId reads youtu.be, shorts, embed, live and the old /v/ form',
+  ['https://youtu.be/jNQXAC9IVRw', 'https://www.youtube.com/shorts/jNQXAC9IVRw',
+   'https://www.youtube.com/embed/jNQXAC9IVRw', 'https://www.youtube.com/live/jNQXAC9IVRw',
+   'https://www.youtube.com/v/jNQXAC9IVRw'].map(MR.U.videoId),
+  ['jNQXAC9IVRw', 'jNQXAC9IVRw', 'jNQXAC9IVRw', 'jNQXAC9IVRw', 'jNQXAC9IVRw']);
+check('videoId survives extra parameters and music.youtube.com',
+  ['https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123&index=2&t=42s',
+   'https://music.youtube.com/watch?v=jNQXAC9IVRw&feature=share'].map(MR.U.videoId),
+  ['jNQXAC9IVRw', 'jNQXAC9IVRw']);
+check('videoId accepts a bare id', MR.U.videoId('jNQXAC9IVRw'), 'jNQXAC9IVRw');
+/* `v=` used to match anywhere in the string, so a channel called "…v=…" or a
+   stray query value could be mistaken for a video. Anchor it to a parameter. */
+check('videoId ignores an 11-char run that is not a v parameter',
+  MR.U.videoId('https://www.youtube.com/@somechannelname'), null);
+check('videoId rejects free text', MR.U.videoId('lofi hip hop radio'), null);
+check('isYouTubeUrl recognises the domains it should',
+  ['https://www.youtube.com/watch?v=jNQXAC9IVRw', 'youtu.be/abc',
+   'https://music.youtube.com/x', 'https://vimeo.com/123', 'not a url'].map(MR.U.isYouTubeUrl),
+  [true, true, true, false, false]);
+/* A watch URL carrying &list= is still one video — only a /playlist? address
+   is a playlist, or pasting a video from a playlist would list the whole thing. */
+check('playlistId only fires on a real playlist address',
+  [MR.U.playlistId('https://www.youtube.com/playlist?list=PLabc123'),
+   MR.U.playlistId('https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PLabc123')],
+  ['PLabc123', null]);
+
 section('channel search');
 check('channelUrl accepts a bare @handle',
   MR.Search.channelUrl('@MrBeast'), 'https://www.youtube.com/@MrBeast/videos');
@@ -1018,6 +1047,61 @@ check('a dragstart for a file no longer on disk publishes nothing', (() => {
 })(), '');
 MR.Bus.patch({ view: 'browse' });
 await settle(150);
+
+section('direct-link bar');
+{
+  MR.Bus.patch({ view: 'browse' });
+  await settle(150);
+  const box = $('.mr-searchbar input');
+  const type = async (text) => {
+    box.value = text;
+    box.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await settle(80);
+  };
+
+  check('no direct bar for an empty box', !!$('.mr-directbar'), false);
+  await type('lofi hip hop');
+  check('no direct bar for a plain search', !!$('.mr-directbar'), false);
+
+  await type('https://www.youtube.com/watch?v=jNQXAC9IVRw');
+  check('a pasted video link raises the direct bar', !!$('.mr-directbar'), true);
+  check('the bar says what it recognised',
+    /Video link detected/.test(text($('.mr-directbar'))), true);
+  const labels = $$('.mr-directbar .ps2-btn').map(text);
+  check('the bar offers video and audio download without searching first',
+    labels, ['Download video', 'Download audio', 'Open']);
+
+  /* The whole point is one click from paste to download — and it must go
+     through Acquire so the licence gate still applies. */
+  /* Assert on the spawn, not on Search.report(): that returns null rather than
+     undefined for an unknown id, so comparing against undefined can never
+     fail and would have proved nothing. A licence check means yt-dlp is asked
+     for full metadata, so the spawn is the evidence. */
+  const spawnsBefore = shims.SPAWNED.length;
+  $$('.mr-directbar .ps2-btn')[0].click();
+  await settle(400);
+  const spawned = shims.SPAWNED.slice(spawnsBefore);
+  check('a direct download runs the licence check first, not a blind download',
+    spawned.some((a) => a.indexOf('-J') > -1 &&
+      a.some((x) => String(x).indexOf('jNQXAC9IVRw') > -1)), true);
+  check('nothing is queued before a verdict exists', MR.Queue.jobs.length, 0);
+
+  await type('https://www.youtube.com/@LofiGirl');
+  check('a pasted channel link is recognised as a channel',
+    /Channel link detected/.test(text($('.mr-directbar'))), true);
+  check('a channel link offers no download buttons, only Open channel',
+    $$('.mr-directbar .ps2-btn').map(text), ['Open channel']);
+
+  await type('https://www.youtube.com/playlist?list=PLabc123');
+  check('a pasted playlist link is recognised as a playlist',
+    /Playlist link detected/.test(text($('.mr-directbar'))), true);
+  check('a playlist link offers List videos', $$('.mr-directbar .ps2-btn').map(text), ['List videos']);
+
+  await type('');
+  check('clearing the box removes the bar', !!$('.mr-directbar'), false);
+  MR.Bus.patch({ view: 'browse' });
+  await settle(120);
+}
 
 section('clicking a video opens it');
 $('.mr-card__title').click();

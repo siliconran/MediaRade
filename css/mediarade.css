@@ -781,3 +781,12 @@ body.is-dragging-media .mr-dock__body { display: block; }
   .mr-wordmark__by { display: none; }
   .mr-lib-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
+
+/* Direct-link bar — shown under the search box when the text in it is a
+   YouTube address, so pasting a link is one click from a download rather than
+   a search followed by a card click. */
+.mr-directbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin: 8px 0 0;
+}
+.mr-directbar .ps2-caption { margin-right: auto; }
