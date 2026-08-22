@@ -928,6 +928,13 @@ check('a job can ask for audio',
   MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","kind":"AUDIO","title":"t"}').kind, 'audio');
 check('an unknown kind falls back to video',
   MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","kind":"flac"}').kind, 'video');
+/* FictusTube writes `source`; other senders may write `from` or `app`. Naming
+   the sender should not depend on guessing which spelling they chose. */
+check('the sender is read from source as well as from',
+  [MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","source":"FictusTube"}').from,
+   MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk","app":"FurcaTube"}').from,
+   MR.Inbox.parse('{"url":"https://youtu.be/abcdefghijk"}').from],
+  ['FictusTube', 'FurcaTube', 'another app']);
 {
   /* A job must be picked up, acted on, and moved out of the way so a restart
      cannot download it a second time. */

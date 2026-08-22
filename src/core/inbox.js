@@ -46,7 +46,9 @@ export const Inbox = {
       url: url,
       kind: kind,
       title: j.title ? String(j.title) : '',
-      from: j.from ? String(j.from) : 'another app'
+      /* Senders disagree on this field name — accept either rather than
+         showing "another app" for a sender that clearly identified itself. */
+      from: String(j.from || j.source || j.app || '').trim() || 'another app'
     };
   },
 
