@@ -261,8 +261,12 @@ const html = readFileSync(join(ROOT, 'dist', 'index.html'), 'utf8')
   .replace(/<link[^>]*>/g, '');
 
 const bundle = readFileSync(join(ROOT, 'dist', 'js', 'mediarade.js'), 'utf8');
-/* The package the build should have taken its version and author from. */
-const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+/* The package the build should have taken its version and author from.
+   Resolved against THIS SCRIPT rather than ROOT: ROOT may be an installed
+   extension folder, which has no package.json, and reading it from there
+   crashed the whole run when verifying a deployed copy. */
+const PKG = JSON.parse(readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'));
 
 const dom = new JSDOM(html, {
   pretendToBeVisual: true,
