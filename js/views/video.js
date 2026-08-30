@@ -1,6 +1,6 @@
 /* =============================================================================
    views/video.js — the detail view: preview, licence report, acquisition
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

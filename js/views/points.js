@@ -1,6 +1,6 @@
 /* =============================================================================
    views/points.js — persist points: named timeline anchors you can drop onto
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

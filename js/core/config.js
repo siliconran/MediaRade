@@ -1,6 +1,6 @@
 /* =============================================================================
    config.js — persisted settings (Documents\MediaRade\config.json)
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

@@ -1,6 +1,6 @@
 <#
     tools/install.ps1 — deploy MediaRade into the CEP extensions folder.
-    MediaRade by rad1x
+    MediaRade by sgtsilicon
 
         npm run build
         npm run deploy          (or: powershell -File tools\install.ps1)

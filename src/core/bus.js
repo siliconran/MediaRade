@@ -1,6 +1,6 @@
 /* =============================================================================
    bus.js — pub/sub + the single mutable app state, backed by a Solid store.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    In the SolidJS port this is the reactive backbone: every module mutates the
    store through Bus.patch / setState, and every component reads `state` from

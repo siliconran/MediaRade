@@ -1,6 +1,6 @@
 /* =============================================================================
    premiere.js — bridge to the ExtendScript host (jsx/MediaRade.jsx)
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import U from './util.js';
 import Bus, { state } from './bus.js';

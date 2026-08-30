@@ -1,6 +1,6 @@
 /* =============================================================================
    inbox.js — accept download jobs handed over by other apps.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    MediaRade is a CEP panel, so it has no port to listen on and is often simply
    not running. A watched folder handles both: a sender drops a small JSON file

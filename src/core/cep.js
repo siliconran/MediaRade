@@ -1,7 +1,7 @@
 /* =============================================================================
    cep.js — slim bridge to the CEP host (no CSInterface.js dependency).
    Talks straight to window.__adobe_cep__ and exposes Node through cep_node.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 
 const raw = globalThis.__adobe_cep__ || null;

@@ -1,6 +1,6 @@
 /* =============================================================================
    library.js — the local manifest of everything MediaRade has downloaded
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

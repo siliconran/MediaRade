@@ -1,6 +1,6 @@
 /* =============================================================================
    views/browse.jsx — search, filtering, results
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { createStore } from 'solid-js/store';

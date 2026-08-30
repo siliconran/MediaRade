@@ -1,6 +1,6 @@
 /* =============================================================================
    proc.js — child-process runner with line streaming + cancellation
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { CEP } from './cep.js';
 

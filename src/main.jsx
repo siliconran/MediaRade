@@ -1,5 +1,5 @@
 /* =============================================================================
-   main.jsx — boot, wiring, lifecycle. MediaRade by rad1x
+   main.jsx — boot, wiring, lifecycle. MediaRade by sgtsilicon
    ========================================================================== */
 import { render } from 'solid-js/web';
 import { For, Show, createSignal } from 'solid-js';
@@ -17,6 +17,7 @@ import YtDlp from './core/ytdlp.js';
 import Proc from './core/proc.js';
 import U from './core/util.js';
 import Inbox from './core/inbox.js';
+import { Ledger } from './core/ledger.js';
 
 import Ambient from './ui/ambient.js';
 import { wireNav, Nav, Rail, StatusChips } from './ui/nav.jsx';
@@ -46,7 +47,7 @@ function App() {
       <header class="mr-header">
         <div class="mr-wordmark">
           <span class="mr-wordmark__name">MEDIA<b>RADE</b></span>
-          <span class="mr-wordmark__by">by rad1x</span>
+          <span class="mr-wordmark__by">by {__APP_AUTHOR__}</span>
         </div>
         <StatusChips />
       </header>
@@ -171,7 +172,7 @@ function run() {
     Search.init();
     Library.load();
     wireInbox();
-    Paths.log('boot complete — MediaRade 1.3.4 by rad1x');
+    Paths.log('boot complete — MediaRade ' + __APP_VERSION__ + ' by ' + __APP_AUTHOR__);
   } catch (e) {
     console.error('[MediaRade] startup failed:', e);
     fatal(e);
@@ -182,8 +183,10 @@ function run() {
      (localhost:8099) both reach the engine through this. */
   window.MR = {
     builtAt: __BUILD_STAMP__,
+    version: __APP_VERSION__,
+    author: __APP_AUTHOR__,
     Config: Config, Paths: Paths, Search: Search, Library: Library, Queue: Queue, Inbox: Inbox,
-    Premiere: Premiere, YtDlp: YtDlp, License: License, Uppbeat: Uppbeat, SP: SP, Bus: Bus, U: U
+    Premiere: Premiere, YtDlp: YtDlp, License: License, Uppbeat: Uppbeat, SP: SP, Ledger: Ledger, Bus: Bus, U: U
   };
 
   render(function () { return <App />; }, U.$('#app'));

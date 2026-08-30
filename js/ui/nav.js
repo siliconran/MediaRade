@@ -1,6 +1,6 @@
 /* =============================================================================
    nav.js — rail navigation, view routing, header status chips
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

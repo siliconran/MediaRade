@@ -1,5 +1,5 @@
 /* =============================================================================
-   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by rad1x
+   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

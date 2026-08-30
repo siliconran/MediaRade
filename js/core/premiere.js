@@ -1,6 +1,6 @@
 /* =============================================================================
    premiere.js — bridge to the ExtendScript host (jsx/MediaRade.jsx)
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

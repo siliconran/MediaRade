@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* =============================================================================
    tools/uppbeat-login.mjs — real-browser Uppbeat login for MediaRade.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    PROBLEM: Uppbeat sits behind Vercel's "Security Checkpoint" (Attack
    Challenge) — a JavaScript proof-of-work that only a real browser can solve.

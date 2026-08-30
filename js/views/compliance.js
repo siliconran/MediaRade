@@ -1,6 +1,6 @@
 /* =============================================================================
    views/compliance.js — the audit trail: policy state, ledger, credits export
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

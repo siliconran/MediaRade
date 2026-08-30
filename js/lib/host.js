@@ -6,7 +6,7 @@
    filesystem plus a process stub so the UI boots in demo mode — enough to
    review the layout and flow. Searches and downloads report a clear error.
    It is never active inside Premiere Pro, where the real host is present.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

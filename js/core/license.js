@@ -1,6 +1,6 @@
 /* =============================================================================
    license.js — strict licence verification.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    Design principle, and the reason this file exists:
 
@@ -491,7 +491,7 @@
     /** Sidecar payload written next to every download. */
     sidecar: function (report, extra) {
       return Object.assign({
-        _generator: 'MediaRade by rad1x',
+        _generator: 'MediaRade by sgtsilicon',
         _disclaimer: 'This record describes what YouTube reported at the time of download. ' +
                      'It is evidence of due diligence, not a grant of rights, and it is not legal advice. ' +
                      'An uploader can change a licence at any time, and an uploader can mark material ' +

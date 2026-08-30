@@ -1,5 +1,5 @@
 /* =============================================================================
-   views/queue.jsx — download queue. MediaRade by rad1x
+   views/queue.jsx — download queue. MediaRade by sgtsilicon
    ========================================================================== */
 import { For, Show, createMemo } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

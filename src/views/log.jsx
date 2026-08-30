@@ -1,6 +1,6 @@
 /* =============================================================================
    views/log.jsx — tail of Logs\mediarade.log
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import Paths from '../core/paths.js';

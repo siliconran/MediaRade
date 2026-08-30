@@ -1,6 +1,6 @@
 /* =============================================================================
    reactive.js — tiny Solid bindings for the non-store state (Config, events).
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { createSignal, onCleanup } from 'solid-js';
 import Bus from '../core/bus.js';

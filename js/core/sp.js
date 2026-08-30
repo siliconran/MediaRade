@@ -3,7 +3,7 @@
    The `sp=` query parameter is a base64'd protobuf. Encoding it ourselves lets
    us push the Creative Commons filter server-side instead of guessing from
    titles, which is the whole point of MediaRade's strict pipeline.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

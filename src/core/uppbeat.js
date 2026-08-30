@@ -1,6 +1,6 @@
 /* =============================================================================
    uppbeat.js — Uppbeat (uppbeat.io) integration
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    Uppbeat publishes no documented public API, so this client works two ways and
    is honest about which one is running:

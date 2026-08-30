@@ -1,6 +1,6 @@
 /* =============================================================================
    views/library.jsx — everything on disk under Documents\MediaRade
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

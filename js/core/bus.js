@@ -1,5 +1,5 @@
 /* =============================================================================
-   bus.js — pub/sub + the single mutable app state. MediaRade by rad1x
+   bus.js — pub/sub + the single mutable app state. MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

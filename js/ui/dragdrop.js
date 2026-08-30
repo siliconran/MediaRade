@@ -1,6 +1,6 @@
 /* =============================================================================
    dragdrop.js — drag media from anywhere in the panel onto a timeline target.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    Why this file ships two kinds of drag:
    1. Pointer-based drag (DnD.source) stays inside the panel and lands on the

@@ -1,6 +1,6 @@
 /* =============================================================================
    tools/smoke.mjs — headless smoke test for the built panel.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
 
    Boots dist/js/mediarade.js inside jsdom with the same CEP/Node shims the dev
    harness uses, then asserts the behaviours that matter: the risk checker's
@@ -261,6 +261,8 @@ const html = readFileSync(join(ROOT, 'dist', 'index.html'), 'utf8')
   .replace(/<link[^>]*>/g, '');
 
 const bundle = readFileSync(join(ROOT, 'dist', 'js', 'mediarade.js'), 'utf8');
+/* The package the build should have taken its version and author from. */
+const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 const dom = new JSDOM(html, {
   pretendToBeVisual: true,
@@ -894,6 +896,33 @@ MR.Uppbeat.loadSession();
 check('loadSession re-derives plan from a stored JWT even when config says free',
   MR.Uppbeat.session().plan, 'creator');
 UB.clearSession();
+
+section('log messages');
+/* Every error the user actually saw in mediarade.log should map to something
+   that names a cause. An SSL EOF used to fall through unmatched and surfaced
+   the raw yt-dlp line, which explained nothing. */
+check('an SSL EOF is explained, not passed through raw',
+  /connection was cut partway/i.test(
+    MR.YtDlp.explain('ERROR: [download] Got error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032). Giving up after 6 retries') || ''),
+  true);
+check('an SSL EOF points at the same IP check as the 403',
+  /Check connection/.test(MR.YtDlp.explain('[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred') || ''), true);
+check('a reset connection is explained too',
+  !!MR.YtDlp.explain('ConnectionResetError: [Errno 104] Connection reset by peer'), true);
+check('the 403 still leads with the IP cause, not the bot check',
+  /googlevideo ties every media URL to the IP/.test(MR.YtDlp.explain('ERROR: unable to download video data: HTTP Error 403: Forbidden') || ''),
+  true);
+/* Version and author were typed into the source in two places that drifted
+   independently. The ledger one is an evidence field, so a stale value there is
+   a wrong audit record, not a cosmetic slip. Both now come from package.json. */
+check('the panel version matches package.json', MR.version, PKG.version);
+check('the author matches package.json', MR.author, PKG.author);
+{
+  /* A ledger entry is the audit record, so assert the version it stamps. */
+  const rec = MR.Ledger.record({ event: 'smoke_version_probe' });
+  check('a ledger entry stamps the real build version',
+    rec && rec.panel, 'MediaRade ' + PKG.version);
+}
 
 section('direct links');
 check('videoId reads a standard watch URL',

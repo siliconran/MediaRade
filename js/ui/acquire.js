@@ -3,7 +3,7 @@
    verify -> gate -> (override dialog) -> queue.
    Every download button in the panel goes through here so the licence check can
    never be skipped by using a different button.
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

@@ -1,6 +1,6 @@
 /* =============================================================================
    views/uppbeat.jsx — Uppbeat music browser, sign-in and download
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

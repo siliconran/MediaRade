@@ -1,5 +1,5 @@
 /* =============================================================================
-   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by rad1x
+   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by sgtsilicon
    ========================================================================== */
 import U from './util.js';
 import Config from './config.js';
@@ -474,6 +474,17 @@ export const YtDlp = {
        'rotating, switch the VPN to a static/dedicated IP or turn it off while downloading. If your IP IS ' +
        'stable, then it is a bot check: install Node.js so yt-dlp can solve the "n" challenge, or set ' +
        '"Cookies from browser" in Settings.'],
+      /* An SSL EOF mid-transfer is the connection being cut underneath the
+         download, not a TLS misconfiguration. On a proxy/VPN that hands out a
+         different exit IP per connection it is the same underlying problem as
+         the 403: googlevideo drops a transfer that arrives from an address the
+         URL was not signed for. Unmatched, this fell through to the raw yt-dlp
+         line, which told the user nothing. */
+      [/UNEXPECTED_EOF_WHILE_READING|EOF occurred in violation of protocol|SSLError|ConnectionResetError|Connection aborted|IncompleteRead/i,
+       'The connection was cut partway through the download (SSL EOF). That usually means the route to ' +
+       'YouTube changed mid-transfer — a VPN or proxy with rotating exit IPs does exactly that. Press ' +
+       '"Check connection" in Settings: if it lists more than one IP, switch to a static/dedicated IP or ' +
+       'turn the VPN off while downloading. Otherwise it is ordinary network instability — retry.'],
       [/Unable to download webpage|getaddrinfo|ENOTFOUND|timed out/i, 'Network error reaching YouTube.'],
       [/Requested format is not available/i, 'That quality is not available for this video. Try a lower cap or "Best".'],
       [/No space left|ENOSPC/i, 'The drive is full.']

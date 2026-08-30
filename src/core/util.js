@@ -1,5 +1,5 @@
 /* =============================================================================
-   util.js — tiny helpers shared by every module. MediaRade by rad1x
+   util.js — tiny helpers shared by every module. MediaRade by sgtsilicon
    ========================================================================== */
 
 /* --- DOM ------------------------------------------------------------- */

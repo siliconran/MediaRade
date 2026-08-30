@@ -1,5 +1,5 @@
 /* =============================================================================
-   views/queue.js — download queue. MediaRade by rad1x
+   views/queue.js — download queue. MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

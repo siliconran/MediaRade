@@ -1,6 +1,6 @@
 /* =============================================================================
    modal.js — dialogs, including the licence-override gate
-   MediaRade by rad1x
+   MediaRade by sgtsilicon
    ========================================================================== */
 (function (global) {
   'use strict';

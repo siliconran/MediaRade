@@ -1,5 +1,5 @@
 /* =============================================================================
-   paths.js — the Documents/MediaRade tree. MediaRade by rad1x
+   paths.js — the Documents/MediaRade tree. MediaRade by sgtsilicon
    ========================================================================== */
 import { CEP } from './cep.js';
 
@@ -80,7 +80,7 @@ const Paths = {
     if (!Paths.exists(readme)) {
       Paths.write(readme, [
         'MediaRade — downloaded content',
-        'by rad1x',
+        'by ' + __APP_AUTHOR__ + ',',
         '',
         'Downloads\\Video       finished video files',
         'Downloads\\Audio       extracted / audio-only files',
