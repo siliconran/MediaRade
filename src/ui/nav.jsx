@@ -1,6 +1,6 @@
 /* =============================================================================
    nav.jsx — rail navigation, view routing, header status chips
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import { For, createMemo } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

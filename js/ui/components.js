@@ -1,5 +1,5 @@
 /* =============================================================================
-   components.js — shared UI builders. MediaRade by sgtsilicon
+   components.js — shared UI builders. MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

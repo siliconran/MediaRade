@@ -1,6 +1,6 @@
 /* =============================================================================
    dragdrop.js — dragging media out of the panel and onto Premiere.
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    MediaRade has no timeline of its own, so there is exactly one kind of drag
    here: a native OS drag. The dragged clip's local file is published on the

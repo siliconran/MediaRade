@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* =============================================================================
    tools/uppbeat-login.mjs — real-browser Uppbeat login for MediaRade.
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    PROBLEM: Uppbeat sits behind Vercel's "Security Checkpoint" (Attack
    Challenge) — a JavaScript proof-of-work that only a real browser can solve.
@@ -303,7 +303,16 @@ const STATE_JS = `(() => {
   const bodyText = document.body ? (document.body.innerText || '').slice(0, 2000) : '';
   const checkpoint = /security\\s+checkpoint|verifying\\s+your\\s+browser|captcha|challenge/i.test(bodyText);
   const failure = !checkpoint && /(incorrect|do not match|are\\s+not\\s+valid|wrong\\s+password|invalid\\s+(email|password|credential)|try\\s+again|too\\s+many|locked|unrecognised|unrecognized)/i.test(bodyText);
-  return { hasForm: !!pass, hasEmail: !!email, hasAuth: hasAuth, loginPath: loginPath, failure: failure };
+  /* Hand back the sentence the page is showing, so a wrong password can be
+     reported as a wrong password instead of a generic timeout. */
+  let reason = '';
+  if (failure) {
+    const line = bodyText.split(/\\n+/).find(function (t) {
+      return /(incorrect|do not match|not\\s+valid|wrong|invalid|try\\s+again|too\\s+many|locked|unrecognis|unrecogniz)/i.test(t);
+    });
+    reason = (line || '').trim().slice(0, 160);
+  }
+  return { hasForm: !!pass, hasEmail: !!email, hasAuth: hasAuth, loginPath: loginPath, failure: failure, reason: reason };
 })()`;
 
 function fillJS(selectorExpr, value) {
@@ -1011,11 +1020,31 @@ async function run() {
       (c.url || '').indexOf('uppbeat.io') !== -1);
     const cookieStr = all.map((c) => c.name + '=' + c.value).join('; ');
 
-    if (!cookieStr || !/(authorization_token|auth_token|session|authorization)/i.test(cookieStr)) {
-      throw new Error('Chrome logged in but exported no session cookie. Check the Chrome window — the login may not have completed.');
-    }
+    /* Ask once more before judging: the session can land a moment after the
+       last poll. */
     if (!me || !me.signedIn) {
       me = (await evaluate(cdp, pageSession, ME_JS).catch(() => null)) || { status: 0, signedIn: false };
+    }
+
+    /* Being signed in is the ONLY success condition. The cookie test alone is
+       not one: Uppbeat issues an `auth_token` to signed-out visitors too, so a
+       failed login still leaves a cookie jar that matches this regex — which
+       previously reported ok:true and stored a guest session that reads as the
+       free plan and 401s on every download. Report why it failed instead. */
+    if (!me.signedIn) {
+      const st = (await evaluate(cdp, pageSession, STATE_JS).catch(() => null)) || {};
+      if (st.reason) throw new Error('Uppbeat rejected the login: ' + st.reason);
+      if (st.hasForm) {
+        throw new Error('The login did not go through — Uppbeat is still showing the sign-in form. ' +
+          'Check the email and password, and finish any CAPTCHA in the Chrome window.');
+      }
+      throw new Error('Signed-in state never arrived. If a security checkpoint or CAPTCHA was open in the ' +
+        'Chrome window, complete it and try again.');
+    }
+
+    if (!cookieStr || !/(authorization_token|auth_token|session|authorization)/i.test(cookieStr)) {
+      throw new Error('Uppbeat accepted the login but Chrome exported no session cookie, so there is nothing ' +
+        'to hand back to the panel. Try again with the Chrome window in the foreground.');
     }
 
     process.stdout.write(JSON.stringify({

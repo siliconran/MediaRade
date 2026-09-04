@@ -1,6 +1,6 @@
 /* =============================================================================
    library.js — the local manifest of everything MediaRade has downloaded
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import U from './util.js';
 import Bus from './bus.js';

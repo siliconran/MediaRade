@@ -1,5 +1,5 @@
 MediaRade
-Copyright 2026 sgtsilicon
+Copyright 2026 siliconran
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ PS2UI design language, distributed under the MIT License:
     clean-room reimagining and is not affiliated with or endorsed by
     Sony. It ships no Sony assets.
 
-The fork/port is by sgtsilicon. The upstream PS2UI project is
+The fork/port is by siliconran. The upstream PS2UI project is
 https://github.com/Timmy-Lane/ps2ui and remains licensed separately
 under its own terms.
 

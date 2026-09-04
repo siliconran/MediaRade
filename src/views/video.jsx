@@ -1,6 +1,6 @@
 /* =============================================================================
    views/video.jsx — the detail view: preview, licence report, acquisition
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

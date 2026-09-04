@@ -1,6 +1,6 @@
 /* =============================================================================
    queue.js — the download queue and the licence gate that guards it
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

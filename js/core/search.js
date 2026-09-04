@@ -1,6 +1,6 @@
 /* =============================================================================
    search.js — search orchestration + the verification pipeline
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    Two stages, deliberately:
      1. flat listing  — fast, but carries NO licence field

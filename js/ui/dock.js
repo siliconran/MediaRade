@@ -1,7 +1,7 @@
 /* =============================================================================
    dock.js — the timeline dock: track lanes + persist points, and the single
    place() path that every insert in the panel funnels through.
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

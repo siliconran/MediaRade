@@ -1,6 +1,6 @@
 /* =============================================================================
    views/browse.js — search, filtering, results
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

@@ -1,6 +1,6 @@
 /* =============================================================================
    components.jsx — shared Solid components (replaces legacy js/ui/components.js)
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import { For } from 'solid-js';
 import U from '../core/util.js';

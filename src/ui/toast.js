@@ -1,5 +1,5 @@
 /* =============================================================================
-   toast.js — transient notices. MediaRade by sgtsilicon
+   toast.js — transient notices. MediaRade by siliconran
    ========================================================================== */
 import U from '../core/util.js';
 import Bus from '../core/bus.js';

@@ -1,6 +1,6 @@
 /* =============================================================================
    license.js — the media risk checker (License Auditor).
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    This module replaces the old "licence type tag" system with a single,
    adversarial risk audit performed on every download and every video view:
@@ -838,7 +838,7 @@ export const License = {
   sidecar: function (report, extra) {
     const r = License.normalize(report);
     return Object.assign({
-      _generator: 'MediaRade by sgtsilicon',
+      _generator: 'MediaRade by siliconran',
       _disclaimer: 'This record describes what YouTube reported at the time of download. ' +
                    'It is evidence of due diligence, not a grant of rights, and it is not legal advice. ' +
                    'An uploader can change a licence at any time, and an uploader can mark material ' +

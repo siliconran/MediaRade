@@ -1,6 +1,6 @@
 /* =============================================================================
    ambient.js — the PS2 boot field: light towers + drifting data cubes
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

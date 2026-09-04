@@ -1,6 +1,6 @@
 /* =============================================================================
    tools/smoke.mjs — headless smoke test for the built panel.
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    Boots dist/js/mediarade.js inside jsdom with the same CEP/Node shims the dev
    harness uses, then asserts the behaviours that matter: the risk checker's

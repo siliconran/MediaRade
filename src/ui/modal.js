@@ -1,6 +1,6 @@
 /* =============================================================================
    modal.js — dialogs, including the licence-override gate
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import U from '../core/util.js';
 

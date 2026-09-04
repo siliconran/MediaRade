@@ -1,5 +1,5 @@
 /* =============================================================================
-   toast.js — transient notices. MediaRade by sgtsilicon
+   toast.js — transient notices. MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

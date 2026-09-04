@@ -1,6 +1,6 @@
 /* =============================================================================
    config.js — persisted settings (Documents\MediaRade\config.json)
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import Paths from './paths.js';
 import Bus from './bus.js';

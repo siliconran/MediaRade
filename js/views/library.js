@@ -1,6 +1,6 @@
 /* =============================================================================
    views/library.js — everything on disk under Documents\MediaRade
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

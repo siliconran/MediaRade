@@ -1,6 +1,6 @@
 /* =============================================================================
    place.js — the single path every "put this on the timeline" action funnels
-   through. MediaRade by sgtsilicon
+   through. MediaRade by siliconran
 
    MediaRade deliberately has no timeline of its own. Media reaches Premiere in
    exactly two ways, both of which act on the real sequence:

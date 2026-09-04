@@ -1,5 +1,5 @@
 /* =============================================================================
-   main.jsx — boot, wiring, lifecycle. MediaRade by sgtsilicon
+   main.jsx — boot, wiring, lifecycle. MediaRade by siliconran
    ========================================================================== */
 import { render } from 'solid-js/web';
 import { For, Show, createSignal } from 'solid-js';

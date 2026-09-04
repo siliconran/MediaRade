@@ -1,6 +1,6 @@
 /* =============================================================================
    views/compliance.jsx — the audit trail: policy state, ledger, credits export
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 import { For, Show, createSignal, onCleanup } from 'solid-js';
 import Bus, { state } from '../core/bus.js';

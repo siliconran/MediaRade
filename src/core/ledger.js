@@ -1,6 +1,6 @@
 /* =============================================================================
    ledger.js — append-only compliance record + attribution sidecars
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    Every download, every override, every strict-mode change lands here. The file
    is JSONL so it survives partial writes and can be handed to someone else.

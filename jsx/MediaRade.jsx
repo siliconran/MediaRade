@@ -1,6 +1,6 @@
 /* =============================================================================
    MediaRade.jsx — ExtendScript host layer for Adobe Premiere Pro
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
 
    ExtendScript is ES3: no JSON, no Array.prototype.map/forEach/indexOf,
    no Object.keys, no String.trim. Everything below stays inside that box.
@@ -337,7 +337,7 @@ $._MediaRade = (function () {
         host: String(app.appName || 'Premiere Pro'),
         hostVersion: String(app.version || ''),
         hasProject: !!(app.project),
-        panel: 'MediaRade by sgtsilicon'
+        panel: 'MediaRade by siliconran'
       });
     } catch (e) { return fail(e.toString()); }
   };

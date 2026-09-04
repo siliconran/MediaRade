@@ -1,5 +1,5 @@
 /* =============================================================================
-   util.js — tiny helpers shared by every module. MediaRade by sgtsilicon
+   util.js — tiny helpers shared by every module. MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

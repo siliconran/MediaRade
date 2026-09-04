@@ -1,6 +1,6 @@
 /* =============================================================================
    proc.js — child-process runner with line streaming + cancellation
-   MediaRade by sgtsilicon
+   MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

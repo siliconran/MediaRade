@@ -1,5 +1,5 @@
 /* =============================================================================
-   main.js — boot, wiring, lifecycle. MediaRade by sgtsilicon
+   main.js — boot, wiring, lifecycle. MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

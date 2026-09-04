@@ -1,5 +1,5 @@
 /* =============================================================================
-   paths.js — the Documents/MediaRade tree. MediaRade by sgtsilicon
+   paths.js — the Documents/MediaRade tree. MediaRade by siliconran
    ========================================================================== */
 (function (global) {
   'use strict';

@@ -1,5 +1,5 @@
 /* =============================================================================
-   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by sgtsilicon
+   ytdlp.js — everything that talks to yt-dlp / ffmpeg. MediaRade by siliconran
    ========================================================================== */
 import U from './util.js';
 import Config from './config.js';
@@ -470,7 +470,9 @@ export const YtDlp = {
        'YouTube refused the media data (HTTP 403). The usual cause is NOT a bot check: googlevideo ties every ' +
        'media URL to the IP that asked for it, so if your connection changes IP between fetching the link and ' +
        'downloading it — a VPN or proxy with rotating exit IPs does exactly that — every chunk after the ' +
-       'first is refused. Press "Check connection" in Settings to see whether your IP is stable. If it is ' +
+       'first is refused. The giveaway: very short clips download fine while anything past a few seconds ' +
+       'fails, because a short file finishes inside one IP window. Press "Check connection" in Settings ' +
+       'to see whether your IP is stable. If it is ' +
        'rotating, switch the VPN to a static/dedicated IP or turn it off while downloading. If your IP IS ' +
        'stable, then it is a bot check: install Node.js so yt-dlp can solve the "n" challenge, or set ' +
        '"Cookies from browser" in Settings.'],
